@@ -58,6 +58,7 @@ class FlyMSystem:
             'volume': 50,
             'gain': 30,
             'rssi': 0,
+            'recording': False,
             'aircraft_data': []
         }
         
@@ -112,6 +113,11 @@ class FlyMSystem:
                 'view': 'gain',
                 'log': f"📶 Ganancia ajustada a {value} dB"
             },
+            'frequency': {
+                'set': lambda: self.sdr.set_frequency(value),
+                'view': None,
+                'log': f"📻 Frecuencia ajustada a {value/1e6:.3f} MHz"
+            },
             'squelch': {
                 'set': lambda: self.audio.set_squelch_threshold(value / 100.0),
                 'view': 'squelch',
@@ -121,8 +127,26 @@ class FlyMSystem:
                 'set': lambda: self._toggle_recording(),
                 'view': None,
                 'log': None
+            },
+            'recording': {
+                'set': lambda: self._toggle_recording() if value != self.state.get('recording', False) else None,
+                'view': None,
+                'log': None
+            },
+            'mode': {
+                'set': lambda: self._change_mode(value),
+                'view': None,
+                'log': f"📡 Modo cambiado a {value}"
             }
         }
+        
+        # Manejar detección de avión simulado
+        if control_type == 'aircraft_detected':
+            if 'aircraft_data' not in self.state:
+                self.state['aircraft_data'] = []
+            self.state['aircraft_data'].append(value)
+            logger.info(f"✈️ Avión detectado: {value.get('callsign', 'UNKNOWN')}")
+            return
         
         # Ejecutar acción si el control existe
         if control_type in control_actions:
@@ -133,7 +157,8 @@ class FlyMSystem:
             
             # Ejecutar setter
             try:
-                action['set']()
+                if action['set']:
+                    action['set']()
             except Exception as e:
                 logger.error(f"❌ Error en {control_type}: {e}")
                 return
@@ -144,7 +169,20 @@ class FlyMSystem:
             
             # Log si hay mensaje
             if action['log']:
-                logger.debug(action['log'])
+                logger.info(action['log'])
+    
+    def _change_mode(self, mode):
+        """Cambiar modo de operación"""
+        if mode == 'ADSB':
+            # Cambiar a frecuencia ADS-B
+            self.sdr.set_frequency(1090000000)  # 1090 MHz
+            self.state['frequency'] = 1090000000
+        elif mode == 'VHF_AM':
+            # Volver a frecuencia VHF por defecto
+            default_freq = self.config['sdr'].get('default_frequency', 125000000)
+            self.sdr.set_frequency(default_freq)
+            self.state['frequency'] = default_freq
+        logger.info(f"📡 Modo cambiado a {mode}")
     
     def _toggle_recording(self):
         """Alternar grabación de audio"""
@@ -217,7 +255,7 @@ class FlyMSystem:
                 self.display.update_display(display_data)
                 
                 # Parpadear LED si está grabando
-                if self.state['recording']:
+                if self.state.get('recording', False):
                     self.controls.blink_record_led()
                 
                 # Esperar un poco
@@ -288,59 +326,96 @@ class FlyMSystem:
         
         logger.info("✅ Sistema detenido correctamente")
     
-    def run(self):
-        """Ejecutar el sistema hasta que se interrumpa"""
+    def run(self, use_gui=True):
+        """
+        Ejecutar el sistema hasta que se interrumpa
+        
+        Args:
+            use_gui: Si True, usa interfaz gráfica en modo simulación
+        """
         try:
             if self.start():
                 # Verificar si hay hardware simulado
                 from sdr_controller import SIMULATION_MODE
                 
                 if SIMULATION_MODE:
-                    # Modo simulación interactivo
                     logger.info("\n" + "="*60)
                     logger.info("🎭 MODO SIMULACIÓN ACTIVO")
                     logger.info("="*60)
-                    logger.info("Comandos disponibles:")
-                    logger.info("  v [0-100]  - Ajustar volumen")
-                    logger.info("  g [0-50]   - Ajustar ganancia")
-                    logger.info("  s [0-100]  - Ajustar squelch")
-                    logger.info("  r          - Toggle grabación")
-                    logger.info("  f [MHz]    - Cambiar frecuencia")
-                    logger.info("  q          - Salir")
-                    logger.info("="*60 + "\n")
                     
-                    # Loop interactivo
-                    while not self.shutdown_event.is_set():
+                    # Preguntar modo de control
+                    if use_gui:
                         try:
-                            cmd = input("🎮 > ").strip().lower().split()
-                            if not cmd:
-                                continue
+                            from simulation.gui_controller import get_gui_controller
                             
-                            if cmd[0] == 'v' and len(cmd) > 1:
-                                value = max(0, min(100, int(cmd[1])))
-                                self.on_control_change('volume', value)
-                            elif cmd[0] == 'g' and len(cmd) > 1:
-                                value = max(0, min(50, int(cmd[1])))
-                                self.on_control_change('gain', value)
-                            elif cmd[0] == 's' and len(cmd) > 1:
-                                value = max(0, min(100, int(cmd[1])))
-                                self.on_control_change('squelch', value)
-                            elif cmd[0] == 'r':
-                                self._toggle_recording()
-                            elif cmd[0] == 'f' and len(cmd) > 1:
-                                freq_mhz = float(cmd[1])
-                                freq_hz = int(freq_mhz * 1e6)
-                                self.state['frequency'] = freq_hz
-                                self.sdr.set_frequency(freq_hz)
-                                logger.info(f"✅ Frecuencia: {freq_mhz} MHz")
-                            elif cmd[0] == 'q':
+                            logger.info("🖥️  Abriendo interfaz gráfica...")
+                            logger.info("   Si no se abre, verifica que tkinter esté instalado")
+                            logger.info("="*60 + "\n")
+                            
+                            # Crear GUI con callback
+                            gui = get_gui_controller(callback=self.on_control_change)
+                            
+                            # Vincular display controller a la GUI
+                            if self.display:
+                                gui.set_display_controller(self.display)
+                                logger.info("📺 Display OLED vinculado a GUI")
+                            
+                            gui.start()
+                            
+                            # Mantener ejecutando mientras GUI está activa
+                            while not self.shutdown_event.is_set() and gui.running:
+                                time.sleep(0.5)
+                            
+                        except ImportError as e:
+                            logger.warning(f"⚠️  No se pudo cargar GUI: {e}")
+                            logger.info("💡 Instalando tkinter: pip install tk")
+                            logger.info("   Continuando con modo consola...\n")
+                            use_gui = False
+                    
+                    if not use_gui:
+                        # Modo consola interactivo
+                        logger.info("💻 Modo consola interactivo")
+                        logger.info("Comandos disponibles:")
+                        logger.info("  v [0-100]  - Ajustar volumen")
+                        logger.info("  g [0-50]   - Ajustar ganancia")
+                        logger.info("  s [0-100]  - Ajustar squelch")
+                        logger.info("  r          - Toggle grabación")
+                        logger.info("  f [MHz]    - Cambiar frecuencia")
+                        logger.info("  q          - Salir")
+                        logger.info("="*60 + "\n")
+                        
+                        # Loop interactivo
+                        while not self.shutdown_event.is_set():
+                            try:
+                                cmd = input("🎮 > ").strip().lower().split()
+                                if not cmd:
+                                    continue
+                                
+                                if cmd[0] == 'v' and len(cmd) > 1:
+                                    value = max(0, min(100, int(cmd[1])))
+                                    self.on_control_change('volume', value)
+                                elif cmd[0] == 'g' and len(cmd) > 1:
+                                    value = max(0, min(50, int(cmd[1])))
+                                    self.on_control_change('gain', value)
+                                elif cmd[0] == 's' and len(cmd) > 1:
+                                    value = max(0, min(100, int(cmd[1])))
+                                    self.on_control_change('squelch', value)
+                                elif cmd[0] == 'r':
+                                    self._toggle_recording()
+                                elif cmd[0] == 'f' and len(cmd) > 1:
+                                    freq_mhz = float(cmd[1])
+                                    freq_hz = int(freq_mhz * 1e6)
+                                    self.state['frequency'] = freq_hz
+                                    self.sdr.set_frequency(freq_hz)
+                                    logger.info(f"✅ Frecuencia: {freq_mhz} MHz")
+                                elif cmd[0] == 'q':
+                                    break
+                                else:
+                                    print("❌ Comando desconocido (escribe comandos como: v 75, g 30, etc.)")
+                            except (ValueError, IndexError):
+                                print("❌ Formato inválido")
+                            except EOFError:
                                 break
-                            else:
-                                print("❌ Comando desconocido (escribe comandos como: v 75, g 30, etc.)")
-                        except (ValueError, IndexError):
-                            print("❌ Formato inválido")
-                        except EOFError:
-                            break
                 else:
                     # Modo hardware real
                     logger.info("📡 Sistema ejecutándose con hardware real...")
@@ -361,13 +436,24 @@ def signal_handler(signum, frame):
 
 def main():
     """Punto de entrada principal"""
+    import argparse
+    
+    # Parser de argumentos
+    parser = argparse.ArgumentParser(description='FlyM Aviation Receiver')
+    parser.add_argument('--no-gui', action='store_true',
+                       help='Usar modo consola en lugar de GUI (solo simulación)')
+    parser.add_argument('--config', default='config/config.yaml',
+                       help='Ruta al archivo de configuración')
+    
+    args = parser.parse_args()
+    
     # Registrar handlers de señales
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
     
     # Crear y ejecutar el sistema
-    system = FlyMSystem()
-    system.run()
+    system = FlyMSystem(config_path=args.config)
+    system.run(use_gui=not args.no_gui)
 
 
 if __name__ == "__main__":

@@ -27,6 +27,9 @@ class MockRtlSdr:
         self.noise_level = 0.05
         self.time_offset = 0.0
         
+        # Simulación de aviones (ADS-B)
+        self.simulated_aircraft = []
+        
         logger.info("🎭 MockRtlSdr inicializado (modo simulación)")
     
     def open(self):
@@ -103,6 +106,21 @@ class MockRtlSdr:
         
         # Convertir a formato esperado (I/Q entrelazado)
         return samples.astype(np.complex64)
+    
+    def add_simulated_aircraft(self, aircraft: dict):
+        """Agregar un avión simulado a la lista"""
+        self.simulated_aircraft.append(aircraft)
+        logger.info(f"✈️ Avión simulado agregado: {aircraft.get('callsign', 'UNKNOWN')}")
+    
+    def clear_simulated_aircraft(self):
+        """Limpiar lista de aviones simulados"""
+        count = len(self.simulated_aircraft)
+        self.simulated_aircraft.clear()
+        logger.info(f"🧹 {count} aviones simulados eliminados")
+    
+    def get_simulated_aircraft(self) -> list:
+        """Obtener lista de aviones simulados"""
+        return self.simulated_aircraft.copy()
     
     def read_samples_async(self, callback: Callable, num_samples: int = 262144):
         """

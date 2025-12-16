@@ -101,6 +101,7 @@ class ControlsManager:
             from simulation.mock_gpio import MockMCP3008
             self.adc = MockMCP3008()
             logger.info("🎭 Usando MockMCP3008 (modo simulación)")
+            logger.info("💡 Usa la GUI principal para controlar los potenciómetros")
         else:
             try:
                 self.adc = MCP3008()
@@ -113,6 +114,30 @@ class ControlsManager:
         logger.info(f"   Volumen: Canal {self.volume_channel}")
         logger.info(f"   Ganancia: Canal {self.gain_channel}")
         logger.info(f"   Squelch: Canal {self.squelch_channel}")
+    
+    def _open_potentiometer_gui(self):
+        """Abrir GUI de control de potenciómetros en modo simulación"""
+        try:
+            from simulation.potentiometer_gui import create_potentiometer_gui
+            import threading
+            
+            # Obtener el MockSpiDev del MockMCP3008
+            mock_spidev = self.adc.spi
+            
+            # Crear y ejecutar GUI en thread separado
+            def run_gui():
+                try:
+                    gui = create_potentiometer_gui(mock_spidev)
+                    logger.info("🎛️ GUI de potenciómetros abierta")
+                    gui.run()
+                except Exception as e:
+                    logger.error(f"Error en GUI de potenciómetros: {e}")
+            
+            gui_thread = threading.Thread(target=run_gui, daemon=True)
+            gui_thread.start()
+            
+        except Exception as e:
+            logger.warning(f"⚠️ No se pudo abrir GUI de potenciómetros: {e}")
     
     def _record_button_callback(self, channel):
         """Callback para botón de grabación"""

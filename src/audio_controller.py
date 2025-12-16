@@ -14,9 +14,11 @@ from typing import Optional
 
 try:
     import sounddevice as sd
+    AUDIO_AVAILABLE = True
 except ImportError:
     sd = None
-    logging.warning("sounddevice no está instalado. Audio no funcionará.")
+    AUDIO_AVAILABLE = False
+    logging.warning("sounddevice no está instalado. Usando modo simulación audio.")
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +36,7 @@ class AudioController:
     def __init__(self, config):
         """Inicializar controlador de audio"""
         self.config = config
+        self.simulation_mode = not AUDIO_AVAILABLE
         
         # Parámetros de audio
         self.sample_rate = config.get('sample_rate', 48000)
@@ -54,6 +57,7 @@ class AudioController:
         # Squelch
         self.enable_squelch = config.get('squelch', True)
         self.squelch_threshold = config.get('squelch_threshold', self.DEFAULT_SQUELCH_THRESHOLD)
+        self.squelch_open = False
         
         # Grabación
         self.recording = False
@@ -65,13 +69,16 @@ class AudioController:
         # Stream
         self.stream = None
         
-        self._initialize_audio()
+        if not self.simulation_mode:
+            self._initialize_audio()
+        else:
+            logger.info("🎵 AudioController en modo simulación (sin sounddevice)")
     
     def _initialize_audio(self):
         """Inicializar sistema de audio"""
         if sd is None:
-            logger.error("❌ sounddevice no disponible")
-            raise ImportError("sounddevice es necesario para audio")
+            logger.warning("⚠️ sounddevice no disponible, usando modo simulación")
+            return
         
         try:
             # Listar dispositivos disponibles
@@ -195,8 +202,11 @@ class AudioController:
         # Calcular nivel RMS de la señal
         rms = np.sqrt(np.mean(audio_data**2))
         
+        # Actualizar estado del squelch
+        self.squelch_open = rms >= self.squelch_threshold
+        
         # Silenciar si está por debajo del umbral
-        if rms < self.squelch_threshold:
+        if not self.squelch_open:
             return np.zeros_like(audio_data)
         
         return audio_data
@@ -252,6 +262,27 @@ class AudioController:
         
         status = "activado" if enabled else "desactivado"
         logger.info(f"🔇 Squelch {status} (umbral: {self.squelch_threshold:.3f})")
+    
+    def set_squelch_threshold(self, threshold_percent: int):
+        """
+        Ajustar umbral de squelch
+        
+        Args:
+            threshold_percent: Umbral en porcentaje (0-100)
+        """
+        # Convertir porcentaje a valor 0.0-1.0
+        threshold = threshold_percent / 100.0
+        self.squelch_threshold = np.clip(threshold, 0.0, 1.0)
+        logger.debug(f"🔇 Squelch threshold: {threshold_percent}% ({self.squelch_threshold:.3f})")
+    
+    def is_squelch_open(self) -> bool:
+        """
+        Verificar si el squelch está abierto (señal fuerte)
+        
+        Returns:
+            True si squelch está abierto (hay señal), False si está cerrado (ruido)
+        """
+        return self.squelch_open
     
     def start_recording(self):
         """Iniciar grabación"""
@@ -316,12 +347,20 @@ class AudioController:
     
     def start(self):
         """Iniciar stream de audio"""
+        if self.simulation_mode:
+            logger.info("▶️  Stream de audio iniciado (simulación)")
+            return
+        
         if self.stream and not self.stream.active:
             self.stream.start()
             logger.info("▶️  Stream de audio iniciado")
     
     def stop(self):
         """Detener stream de audio"""
+        if self.simulation_mode:
+            logger.info("⏹️  Stream de audio detenido (simulación)")
+            return
+        
         if self.stream and self.stream.active:
             self.stream.stop()
             logger.info("⏹️  Stream de audio detenido")
@@ -331,6 +370,10 @@ class AudioController:
         # Si está grabando, detener y guardar
         if self.recording:
             self.stop_recording()
+        
+        if self.simulation_mode:
+            logger.info("✅ Sistema de audio cerrado (simulación)")
+            return
         
         if self.stream:
             try:

@@ -69,10 +69,12 @@ class DisplayController:
     
     def _initialize_displays(self):
         """Inicializar pantalla OLED o simulador"""
+        global canvas
         try:
             if not DISPLAY_AVAILABLE:
                 # Modo simulación
-                from simulation.mock_display import MockOLED, get_mock_device
+                from simulation.mock_display import MockOLED, get_mock_device, canvas as mock_canvas
+                canvas = mock_canvas  # Usar el canvas mock
                 device = get_mock_device(width=128, height=32)
                 self.display = MockOLED(device=device)
                 logger.info("🎭 Usando MockOLED (modo simulación)")
@@ -86,7 +88,8 @@ class DisplayController:
                 except Exception as e:
                     logger.error(f"❌ Error al inicializar display: {e}")
                     # Fallback a mock
-                    from simulation.mock_display import MockOLED, get_mock_device
+                    from simulation.mock_display import MockOLED, get_mock_device, canvas as mock_canvas
+                    canvas = mock_canvas  # Usar el canvas mock
                     device = get_mock_device(width=128, height=32)
                     self.display = MockOLED(device=device)
                     logger.warning("⚠️  Usando mock display como fallback")
@@ -100,6 +103,24 @@ class DisplayController:
     
     def _load_fonts(self):
         """Cargar fuentes para las pantallas"""
+        if not DISPLAY_AVAILABLE or ImageFont is None:
+            # En modo simulación, usar fuentes por defecto
+            try:
+                from PIL import ImageFont as PilFont
+                self.fonts = {
+                    'small': PilFont.load_default(),
+                    'medium': PilFont.load_default(),
+                    'large': PilFont.load_default()
+                }
+            except:
+                self.fonts = {
+                    'small': None,
+                    'medium': None,
+                    'large': None
+                }
+            logger.info("📝 Usando fuentes por defecto (modo simulación)")
+            return
+        
         try:
             # Intentar cargar fuentes TrueType
             self.fonts = {
@@ -111,19 +132,32 @@ class DisplayController:
         except Exception as e:
             logger.warning(f"⚠️  No se pudieron cargar fuentes personalizadas: {e}")
             # Usar fuente por defecto
-            self.fonts = {
-                'small': ImageFont.load_default(),
-                'medium': ImageFont.load_default(),
-                'large': ImageFont.load_default()
-            }
+            try:
+                self.fonts = {
+                    'small': ImageFont.load_default(),
+                    'medium': ImageFont.load_default(),
+                    'large': ImageFont.load_default()
+                }
+            except:
+                self.fonts = {
+                    'small': None,
+                    'medium': None,
+                    'large': None
+                }
     
     def _show_splash(self):
         """Mostrar pantalla de inicio"""
-        with canvas(self.display) as draw:
-            draw.text((15, 0), "FlyM System", fill="white", font=self.fonts['large'])
-            draw.text((10, 18), "Aviation RX", fill="white", font=self.fonts['medium'])
-        
-        time.sleep(2)
+        try:
+            logger.info("🎉 Mostrando splash screen...")
+            with canvas(self.display) as draw:
+                draw.text((15, 0), "FlyM System", fill="white", font=self.fonts.get('large'))
+                draw.text((10, 18), "Aviation RX", fill="white", font=self.fonts.get('medium'))
+            logger.info("✅ Splash screen mostrado")
+            time.sleep(2)
+        except Exception as e:
+            logger.error(f"❌ Error mostrando splash: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
     
     def update_display(self, data: Dict[str, Any]):
         """
@@ -179,20 +213,24 @@ class DisplayController:
     
     def _draw_main_view(self, data):
         """Vista principal: Frecuencia y RSSI"""
-        with canvas(self.display) as draw:
-            # Línea 1: Frecuencia
-            freq_mhz = data.get('frequency', 0) / 1e6
-            freq_text = f"{freq_mhz:.3f}"
-            draw.text((0, 0), freq_text, fill="white", font=self.fonts['large'])
-            draw.text((90, 2), "MHz", fill="white", font=self.fonts['small'])
-            
-            # Línea 2: Modo y RSSI
-            mode_text = data.get('mode', 'VHF').replace('_', ' ')
-            draw.text((0, 18), mode_text, fill="white", font=self.fonts['small'])
-            
-            # Barra de señal
-            rssi = data.get('rssi', 0)
-            self._draw_signal_bars(draw, 70, 18, rssi)
+        try:
+            with canvas(self.display) as draw:
+                # Línea 1: Frecuencia
+                freq_mhz = data.get('frequency', 0) / 1e6
+                freq_text = f"{freq_mhz:.3f}"
+                draw.text((0, 0), freq_text, fill="white", font=self.fonts['large'])
+                draw.text((90, 2), "MHz", fill="white", font=self.fonts['small'])
+                
+                # Línea 2: Modo y RSSI
+                mode_text = data.get('mode', 'VHF').replace('_', ' ')
+                draw.text((0, 18), mode_text, fill="white", font=self.fonts['small'])
+                
+                # Barra de señal
+                rssi = data.get('rssi', 0)
+                self._draw_signal_bars(draw, 70, 18, rssi)
+            logger.debug(f"📺 Main view dibujada: {freq_text} MHz")
+        except Exception as e:
+            logger.error(f"Error dibujando main view: {e}")
     
     def _draw_volume_view(self, data):
         """Vista de volumen con escala"""

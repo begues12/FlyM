@@ -135,14 +135,29 @@ class MockSpiDev:
     def _get_simulated_values(self) -> dict:
         """
         Genera valores simulados para cada canal
-        Varía con el tiempo para simular cambios
+        Los valores se mantienen relativamente estables pero varían ligeramente
+        para simular ruido del ADC real
         """
         t = time.time()
         
+        # Valores base para cada potenciómetro
+        # Canal 0: Volumen (50% = 512)
+        # Canal 1: Ganancia (60% = 614)  
+        # Canal 2: Squelch (20% = 205)
+        
+        base_values = {
+            0: 512,   # Volumen medio (50%)
+            1: 614,   # Ganancia media-alta (60%)
+            2: 205,   # Squelch bajo (20%)
+        }
+        
+        # Agregar ruido pequeño para simular variación del ADC
+        import random
+        noise = random.randint(-5, 5)
+        
         return {
-            0: int(512 + 200 * (0.5 + 0.5 * (t % 10) / 10)),  # Volumen (50-70%)
-            1: int(512 + 300 * (0.3 + 0.3 * (t % 15) / 15)),  # Ganancia (30-60%)
-            2: int(100 + 50 * (t % 5) / 5),  # Squelch (10-15%)
+            channel: max(0, min(1023, value + noise))
+            for channel, value in base_values.items()
         }
 
 

@@ -59,6 +59,7 @@ class SDRController:
             # Modo simulación
             from simulation.mock_sdr import MockRtlSdr
             self.sdr = MockRtlSdr()
+            self.sdr.open()  # ✅ Abrir el mock SDR
             logger.info("🎭 Usando MockRtlSdr (modo simulación)")
         else:
             # Modo real
