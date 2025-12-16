@@ -1,0 +1,23 @@
+# FlyM - Dependencias de Desarrollo
+# Instalar con: pip install -r requirements-dev.txt
+
+# Primero instalar dependencias base
+-r requirements.txt
+
+# Testing
+pytest>=7.0.0
+pytest-cov>=4.0.0
+pytest-mock>=3.10.0
+
+# Code Quality
+black>=22.0.0
+flake8>=4.0.0
+pylint>=2.15.0
+mypy>=0.991
+
+# Documentation
+sphinx>=5.0.0
+sphinx-rtd-theme>=1.0.0
+
+# Utilities
+ipython>=8.0.0

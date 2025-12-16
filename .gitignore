@@ -1,0 +1,88 @@
+# .gitignore para FlyM Aviation Receiver
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+logs/
+flym.log
+
+# Sistema
+.DS_Store
+Thumbs.db
+
+# Configuración local
+config/config.local.yaml
+config/*.local.yaml
+
+# Datos temporales
+*.tmp
+*.temp
+tmp/
+temp/
+
+# Backups
+*.bak
+*.backup
+
+# Recordings (si se implementa)
+recordings/
+*.wav
+*.mp3
+
+# Caches
+.cache/
+*.cache
+
+# Jupyter Notebooks (si se usan para desarrollo)
+.ipynb_checkpoints/
+*.ipynb
+
+# Documentación generada
+docs/_build/
+docs/_static/
+docs/_templates/
+
+# Pruebas
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+
+# Específico de proyecto
+*.pcap
+*.raw
+samples/
+venv

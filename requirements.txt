@@ -1,0 +1,30 @@
+# FlyM Aviation Receiver - Dependencias Base
+# Este archivo contiene dependencias que funcionan en Windows/Linux/Mac
+# Para Raspberry Pi, instalar también: pip install -r requirements-rpi.txt
+
+# Core dependencies
+numpy>=1.21.0
+scipy>=1.7.0
+PyYAML>=6.0
+
+# SDR
+pyrtlsdr>=0.2.91
+
+# Audio
+sounddevice>=0.4.4
+soundfile>=0.10.3
+
+# Display (para desarrollo, usar emulador)
+luma.oled>=3.8.1
+Pillow>=9.0.0
+
+# ADS-B (opcional, para funciones avanzadas)
+# pyModeS>=2.0  # Librería profesional de decodificación ADS-B
+
+# Utilities
+python-dateutil>=2.8.2
+
+# Desarrollo (opcional)
+# pytest>=7.0.0
+# black>=22.0.0
+# flake8>=4.0.0

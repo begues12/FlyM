@@ -1,0 +1,9 @@
+# FlyM - Dependencias específicas de Raspberry Pi
+# Solo instalar en Raspberry Pi: pip install -r requirements-rpi.txt
+
+# GPIO (Raspberry Pi SOLAMENTE)
+RPi.GPIO>=0.7.1
+spidev>=3.5
+
+# Nota: Estas librerías NO funcionan en Windows/Mac
+# Requieren hardware GPIO de Raspberry Pi

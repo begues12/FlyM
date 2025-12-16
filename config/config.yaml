@@ -1,0 +1,60 @@
+# Configuración FlyM Aviation Receiver
+# =====================================
+
+# Configuración del SDR (RTL-SDR)
+sdr:
+  sample_rate: 2048000          # Tasa de muestreo en Hz (2.048 MHz)
+  default_frequency: 125000000  # Frecuencia inicial en Hz (125 MHz)
+  default_gain: 30              # Ganancia inicial en dB
+  buffer_size: 262144           # Tamaño del buffer (256K muestras)
+  audio_rate: 48000             # Tasa de muestreo de audio en Hz
+
+# Configuración de Audio (PCM5102 DAC)
+audio:
+  sample_rate: 48000            # Tasa de muestreo en Hz
+  channels: 1                   # 1=Mono, 2=Estéreo
+  dtype: 'float32'              # Tipo de dato
+  device: null                  # null=default, o nombre del dispositivo
+  default_volume: 50            # Volumen inicial (0-100)
+  buffer_size: 2048             # Tamaño del buffer de audio
+  squelch: true                 # Activar squelch (silenciar ruido)
+  squelch_threshold: 0.01       # Umbral de squelch (0.0-1.0)
+  recordings_path: '/home/pi/flym/recordings'  # Ruta para grabaciones
+  recording_format: 'wav'       # Formato de archivo (wav)
+
+# Configuración de pantalla OLED (una única pantalla con vistas dinámicas)
+display:
+  display_address: 0x3C         # Dirección I²C de la pantalla OLED
+  i2c_port: 1                   # Puerto I²C (1 para Raspberry Pi)
+  view_timeout: 3               # Segundos antes de volver a vista principal
+
+# Configuración de Controles
+controls:
+  volume_pot_channel: 0         # Canal ADC para potenciómetro de volumen
+  gain_pot_channel: 1           # Canal ADC para potenciómetro de ganancia
+  squelch_pot_channel: 2        # Canal ADC para potenciómetro de squelch
+  record_button_pin: 22         # Pin GPIO para botón de grabación
+  record_led_pin: 23            # Pin GPIO para LED indicador de grabación
+  default_frequency: 125000000  # Frecuencia inicial en Hz
+
+# Configuración de ADS-B
+adsb:
+  threshold: 0.5                # Umbral de detección
+  aircraft_timeout: 60          # Timeout en segundos para considerar avión inactivo
+
+# Frecuencias comunes de aviación (MHz)
+airband_presets:
+  - name: "Tower 1"
+    frequency: 118.1
+  - name: "Tower 2"
+    frequency: 118.3
+  - name: "Approach"
+    frequency: 119.5
+  - name: "Ground"
+    frequency: 121.9
+  - name: "Emergency"
+    frequency: 121.5
+  - name: "ATIS"
+    frequency: 127.0
+  - name: "ADS-B"
+    frequency: 1090.0
