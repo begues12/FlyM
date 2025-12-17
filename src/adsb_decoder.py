@@ -44,7 +44,7 @@ class ADSBDecoder:
             'crc_errors': 0
         }
         
-        logger.info("✈️  Decodificador ADS-B inicializado")
+        print("✈️  Decodificador ADS-B inicializado")
     
     def decode(self, samples):
         """

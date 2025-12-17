@@ -28,15 +28,30 @@ class SimulatorGUI:
         
         # Estado del sistema
         self.state = {
-            'volume': 60,
-            'gain': 25,
-            'squelch': 10,
-            'frequency': 125.0,  # MHz
+            'volume': 50,
+            'gain': 30,
+            'autoscan': 0,  # 0=OFF, 1=ON
+            'frequency': 125.0e6,  # Hz
             'recording': False,
             'mode': 'VHF_AM',
             'rssi': 0,
-            'squelch_open': False
+            'current_menu': 'frequency',  # Menú activo
+            'memory': 1,  # Slot de memoria actual (0=no guardar, 1-10)
+            'vox': 0,  # 0=OFF, 1=ON
+            'submenu_open': False,  # Submenú abierto
+            'submenu_option': 0,  # Opción seleccionada (0-3)
+            'eq_auto': 0  # Ecualizador automático 0=OFF, 1=ON
         }
+        
+        # Menús disponibles
+        self.menus = ['frequency', 'autoscan', 'gain', 'volume', 'memory', 'vox']
+        self.menu_index = 0
+        
+        # Sistema de mantener presionado con aceleración exponencial
+        self.button_held = None  # '+' o '-' cuando está presionado
+        self.hold_timer = None  # Timer ID de tkinter
+        self.hold_delay = 500  # ms inicial (empieza lento)
+        self.hold_count = 0  # Contador para calcular aceleración
         
         # Widgets
         self.widgets = {}
@@ -46,12 +61,12 @@ class SimulatorGUI:
         self.running = True
         self.thread = threading.Thread(target=self._run_gui, daemon=True)
         self.thread.start()
-        logger.info("🎮 Interfaz gráfica iniciada")
+        print("🎮 Interfaz gráfica iniciada")
     
     def set_display_controller(self, display_controller):
         """Establece referencia al display controller para actualizar OLED"""
         self.display_controller = display_controller
-        logger.info("🖥️ Display controller vinculado a GUI")
+        print("🖥️ Display controller vinculado a GUI")
     
     def stop(self):
         """Detiene la interfaz gráfica"""
@@ -62,7 +77,7 @@ class SimulatorGUI:
                 self.root.destroy()
             except:
                 pass
-        logger.info("🎮 Interfaz gráfica detenida")
+        print("🎮 Interfaz gráfica detenida")
     
     def _run_gui(self):
         """Ejecuta el loop principal de la GUI"""
@@ -79,8 +94,6 @@ class SimulatorGUI:
             self._create_header()
             self._create_oled_display_section()
             self._create_controls_section()
-            self._create_frequency_section()
-            self._create_recording_section()
             self._create_aircraft_simulation_section()
             self._create_mode_section()
             self._create_status_section()
@@ -139,10 +152,6 @@ class SimulatorGUI:
                          style='Title.TLabel')
         title.pack()
         
-        subtitle = ttk.Label(frame,
-                            text="Control Panel de Pruebas",
-                            style='Normal.TLabel')
-        subtitle.pack()
     
     def _create_oled_display_section(self):
         """Crea sección que muestra el display OLED simulado"""
@@ -180,126 +189,100 @@ class SimulatorGUI:
                  font=('Arial', 8)).pack(side='left', padx=10)
     
     def _create_controls_section(self):
-        """Crea sección de controles (volumen, ganancia, squelch)"""
-        frame = ttk.LabelFrame(self.root, text="  Controles  ", padding=15)
+        """Crea sección de botones de control"""
+        frame = ttk.LabelFrame(self.root, text="  🎛️ Controles (Botones)  ", padding=15)
         frame.pack(padx=20, pady=10, fill='x')
         
-        # Volumen
-        vol_frame = ttk.Frame(frame)
-        vol_frame.pack(fill='x', pady=5)
+        # Indicador de menú activo
+        menu_frame = ttk.Frame(frame)
+        menu_frame.pack(fill='x', pady=(0, 15))
         
-        ttk.Label(vol_frame, text="🔊 Volumen:", style='Normal.TLabel').pack(side='left')
-        self.widgets['volume_label'] = ttk.Label(vol_frame, 
-                                                  text=f"{self.state['volume']}%",
-                                                  style='Value.TLabel')
-        self.widgets['volume_label'].pack(side='right')
-        
-        self.widgets['volume_slider'] = ttk.Scale(frame,
-                                                   from_=0, to=100,
-                                                   orient='horizontal',
-                                                   value=self.state['volume'],
-                                                   command=self._on_volume_change)
-        self.widgets['volume_slider'].pack(fill='x', pady=(0, 10))
-        
-        # Filtro de Ruido (Gain)
-        gain_frame = ttk.Frame(frame)
-        gain_frame.pack(fill='x', pady=5)
-        
-        ttk.Label(gain_frame, text="🎚️ Filtro de Ruido:", style='Normal.TLabel').pack(side='left')
-        self.widgets['gain_label'] = ttk.Label(gain_frame,
-                                                text=f"{self.state['gain']} dB",
-                                                style='Value.TLabel')
-        self.widgets['gain_label'].pack(side='right')
-        
-        self.widgets['gain_slider'] = ttk.Scale(frame,
-                                                from_=0, to=50,
-                                                orient='horizontal',
-                                                value=self.state['gain'],
-                                                command=self._on_gain_change)
-        self.widgets['gain_slider'].pack(fill='x', pady=(0, 10))
     
-    def _create_frequency_section(self):
-        """Crea sección de frecuencia"""
-        frame = ttk.LabelFrame(self.root, text="  Frecuencia  ", padding=15)
-        frame.pack(padx=20, pady=10, fill='x')
         
-        # Slider de frecuencia
-        freq_slider_frame = ttk.Frame(frame)
-        freq_slider_frame.pack(fill='x', pady=5)
-        
-        ttk.Label(freq_slider_frame, text="📻 Frecuencia:", style='Normal.TLabel').pack(side='left')
-        self.widgets['freq_label'] = ttk.Label(freq_slider_frame,
-                                                text=f"{self.state['frequency']:.3f} MHz",
-                                                style='Value.TLabel')
-        self.widgets['freq_label'].pack(side='right')
-        
-        # Slider para rango VHF (108-137 MHz)
-        self.widgets['freq_slider'] = ttk.Scale(frame,
-                                                from_=108.0, to=137.0,
-                                                orient='horizontal',
-                                                value=self.state['frequency'],
-                                                command=self._on_frequency_slider_change)
-        self.widgets['freq_slider'].pack(fill='x', pady=(0, 10))
-        
-        # Labels min/max
-        minmax_frame = ttk.Frame(frame)
-        minmax_frame.pack(fill='x')
-        ttk.Label(minmax_frame, text="108.0 MHz", style='Normal.TLabel', font=('Arial', 8)).pack(side='left')
-        ttk.Label(minmax_frame, text="137.0 MHz", style='Normal.TLabel', font=('Arial', 8)).pack(side='right')
-        
-        # Separador
         ttk.Separator(frame, orient='horizontal').pack(fill='x', pady=10)
         
-        # Entrada manual
-        freq_frame = ttk.Frame(frame)
-        freq_frame.pack(fill='x')
+        # Botones de control
+        btn_frame = ttk.Frame(frame)
+        btn_frame.pack(pady=10)
         
-        ttk.Label(freq_frame, text="Manual:", style='Normal.TLabel').pack(side='left')
+        # Botón MENÚ con detección de HOLD
+        menu_btn = tk.Button(btn_frame,
+                             text="📋 MENÚ",
+                             width=15,
+                             font=('Arial', 10),
+                             relief=tk.RAISED,
+                             borderwidth=2)
+        menu_btn.bind('<ButtonPress-1>', lambda e: self._on_menu_button_press())
+        menu_btn.bind('<ButtonRelease-1>', lambda e: self._on_menu_button_release())
+        menu_btn.pack(side='left', padx=10)
+        self.widgets['menu_btn'] = menu_btn
         
-        self.widgets['freq_entry'] = ttk.Entry(freq_frame, width=15)
-        self.widgets['freq_entry'].insert(0, str(self.state['frequency']))
-        self.widgets['freq_entry'].pack(side='left', padx=10)
+        # Timer para detectar hold en botón MENU
+        self.menu_hold_timer = None
+        self.menu_press_time = None
         
-        ttk.Label(freq_frame, text="MHz", style='Normal.TLabel').pack(side='left')
         
-        btn = ttk.Button(freq_frame, text="Aplicar", command=self._on_frequency_apply)
-        btn.pack(side='right', padx=5)
+        # Botón + con eventos de mantener
+        plus_btn = tk.Button(btn_frame,
+                            text="➕ +",
+                            width=10,
+                            font=('Arial', 12),
+                            relief=tk.RAISED,
+                            borderwidth=2)
+        plus_btn.bind('<ButtonPress-1>', lambda e: self._on_button_press('+'))
+        plus_btn.bind('<ButtonRelease-1>', lambda e: self._on_button_release())
+        plus_btn.pack(side='left', padx=10)
+        self.widgets['plus_btn'] = plus_btn
         
-        # Frecuencias preestablecidas
-        preset_frame = ttk.Frame(frame)
-        preset_frame.pack(pady=10)
+        # Botón - con eventos de mantener
+        minus_btn = tk.Button(btn_frame,
+                             text="➖ -",
+                             width=10,
+                             font=('Arial', 12),
+                             relief=tk.RAISED,
+                             borderwidth=2)
+        minus_btn.bind('<ButtonPress-1>', lambda e: self._on_button_press('-'))
+        minus_btn.bind('<ButtonRelease-1>', lambda e: self._on_button_release())
+        minus_btn.pack(side='left', padx=10)
+        self.widgets['minus_btn'] = minus_btn
         
-        presets = [
-            ("118.0", 118.0),
-            ("121.5", 121.5),
-            ("125.0", 125.0),
-            ("1090.0 (ADS-B)", 1090.0)
+        # Valores actuales (mostrar info en tabla de 2 columnas)
+        ttk.Separator(frame, orient='horizontal').pack(fill='x', pady=10)
+        
+        values_frame = ttk.Frame(frame)
+        values_frame.pack(fill='x')
+        
+        # Grid de valores en formato tabla 3x2
+        labels = [
+            ("Frecuencia:", "frequency_val", f"{self.state['frequency']/1e6:.3f} MHz"),
+            ("Auto-Scan:", "autoscan_val", "OFF"),
+            ("Ganancia:", "gain_val", f"{self.state['gain']} dB"),
+            ("Volumen:", "volume_val", f"{self.state['volume']}%"),
+            ("Memoria:", "memory_val", "M1"),
+            ("VOX:", "vox_val", "OFF")
         ]
         
-        for label, freq in presets:
-            btn = ttk.Button(preset_frame,
-                            text=label,
-                            command=lambda f=freq: self._set_frequency(f))
-            btn.pack(side='left', padx=5)
-    
-    def _create_recording_section(self):
-        """Crea sección de grabación"""
-        frame = ttk.LabelFrame(self.root, text="  Grabación  ", padding=15)
-        frame.pack(padx=20, pady=10, fill='x')
-        
-        btn_frame = ttk.Frame(frame)
-        btn_frame.pack()
-        
-        self.widgets['record_btn'] = ttk.Button(btn_frame,
-                                                text="🔴 Iniciar Grabación",
-                                                command=self._toggle_recording,
-                                                width=30)
-        self.widgets['record_btn'].pack()
-        
-        self.widgets['record_status'] = ttk.Label(frame,
-                                                   text="⚫ No grabando",
-                                                   style='Normal.TLabel')
-        self.widgets['record_status'].pack(pady=5)
+        # Organizar en 2 columnas
+        for row_idx in range(3):
+            row_frame = ttk.Frame(values_frame)
+            row_frame.pack(fill='x', pady=2)
+            
+            # Columna izquierda
+            left_idx = row_idx
+            if left_idx < len(labels):
+                label_text, key, value = labels[left_idx]
+                ttk.Label(row_frame, text=label_text, style='Normal.TLabel', width=11).pack(side='left')
+                self.widgets[key] = ttk.Label(row_frame, text=value, style='Value.TLabel', width=14)
+                self.widgets[key].pack(side='left')
+            
+            # Columna derecha
+            right_idx = row_idx + 3
+            if right_idx < len(labels):
+                label_text, key, value = labels[right_idx]
+                ttk.Label(row_frame, text=label_text, style='Normal.TLabel', width=11).pack(side='left', padx=(20, 0))
+                self.widgets[key] = ttk.Label(row_frame, text=value, style='Value.TLabel', width=14)
+                self.widgets[key].pack(side='left')
+
     
     def _create_aircraft_simulation_section(self):
         """Crea sección de simulación de aviones"""
@@ -376,15 +359,15 @@ class SimulatorGUI:
                                                 style='Value.TLabel')
         self.widgets['rssi_label'].pack(side='right')
         
-        # Squelch Status
-        sq_frame = ttk.Frame(frame)
-        sq_frame.pack(fill='x', pady=2)
+        # Auto-Scan Status
+        scan_frame = ttk.Frame(frame)
+        scan_frame.pack(fill='x', pady=2)
         
-        ttk.Label(sq_frame, text="🎚️  Squelch:", style='Normal.TLabel').pack(side='left')
-        self.widgets['squelch_status'] = ttk.Label(sq_frame,
-                                                    text="⚫ Cerrado",
+        ttk.Label(scan_frame, text="🔄 Auto-Scan:", style='Normal.TLabel').pack(side='left')
+        self.widgets['autoscan_status'] = ttk.Label(scan_frame,
+                                                    text="⚫ OFF",
                                                     style='Value.TLabel')
-        self.widgets['squelch_status'].pack(side='right')
+        self.widgets['autoscan_status'].pack(side='right')
         
         # Modo actual
         mode_frame = ttk.Frame(frame)
@@ -413,69 +396,288 @@ class SimulatorGUI:
                              width=20)
         btn_help.pack(side='left', padx=5)
     
-    def _on_volume_change(self, value):
-        """Callback cambio de volumen"""
-        vol = int(float(value))
-        self.state['volume'] = vol
-        self.widgets['volume_label'].config(text=f"{vol}%")
+    def _on_menu_button_press(self):
+        """Callback cuando se presiona botón MENÚ"""
+        import time
+        self.menu_press_time = time.time()
         
+        # Programar detección de HOLD (1 segundo)
+        self.menu_hold_timer = self.root.after(1000, self._on_menu_hold_detected)
+    
+    def _on_menu_button_release(self):
+        """Callback cuando se suelta botón MENÚ"""
+        import time
+        if self.menu_press_time is None:
+            return
+        
+        # Cancelar timer de HOLD si existe
+        if self.menu_hold_timer:
+            self.root.after_cancel(self.menu_hold_timer)
+            self.menu_hold_timer = None
+        
+        hold_duration = time.time() - self.menu_press_time
+        self.menu_press_time = None
+        
+        # Si fue un click rápido (menos de 1 segundo)
+        if hold_duration < 1.0:
+            self._on_menu_click()
+    
+    def _on_menu_hold_detected(self):
+        """HOLD detectado en botón MENÚ - abrir submenú"""
         if self.on_control_change:
-            self.on_control_change('volume', vol)
+            self.on_control_change('submenu_toggle', None)
+        
+        self.menu_hold_timer = None
+    
+    def _on_menu_click(self):
+        """Click normal en botón MENÚ - cambiar menú o confirmar en submenú"""
+        if self.on_control_change:
+            self.on_control_change('menu_click', None)
+    
+    def _on_button_press(self, button_type):
+        """Callback cuando se presiona botón + o -"""
+        self.button_held = button_type
+        self.hold_count = 0
+        self.hold_delay = 500
+        
+        # Ejecutar primer cambio inmediatamente
+        if button_type == '+':
+            self._on_plus_button()
+        else:
+            self._on_minus_button()
+        
+        # En el submenú, NO iniciar timer de repetición automática
+        if not self.state.get('submenu_open', False):
+            self._schedule_button_repeat()
+    
+    def _on_button_release(self):
+        """Callback cuando se suelta el botón"""
+        self.button_held = None
+        if self.hold_timer:
+            self.root.after_cancel(self.hold_timer)
+            self.hold_timer = None
+        self.hold_count = 0
+    
+    def _schedule_button_repeat(self):
+        """Programa la siguiente repetición del botón con aceleración progresiva"""
+        if self.button_held is None:
+            return
+        
+        # Incrementar contador y calcular nuevo delay con aceleración progresiva
+        self.hold_count += 1
+        
+        # Aceleración progresiva:
+        # - Inicio: 400ms (lento para control preciso)
+        # - Medio: 200ms (acelera)
+        # - Rápido: 100ms (más rápido)
+        # - Máximo: 50ms (muy rápido para cambios grandes)
+        if self.hold_count < 3:
+            self.hold_delay = 400  # Lento al inicio: 2.5/seg
+        elif self.hold_count < 6:
+            self.hold_delay = 200  # Medio: 5/seg
+        elif self.hold_count < 10:
+            self.hold_delay = 100  # Rápido: 10/seg
+        else:
+            self.hold_delay = 50   # Muy rápido: 20/seg
+        
+        # Ejecutar el cambio
+        if self.button_held == '+':
+            self._on_plus_button()
+        else:
+            self._on_minus_button()
+        
+        # Programar siguiente repetición
+        self.hold_timer = self.root.after(self.hold_delay, self._schedule_button_repeat)
+    
+    def _on_plus_button(self):
+        """Callback botón + - incrementar valor actual o cambiar valor en submenú"""
+        # Si el submenú está abierto, cambiar valor
+        if self.state.get('submenu_open', False):
+            if self.on_control_change:
+                self.on_control_change('submenu_change_value', 1)
+            return
+        
+        menu = self.state['current_menu']
+        
+        # Pasos e increments
+        steps = {
+            'frequency': 25000,  # 25 kHz en Hz
+            'autoscan': 1,  # Toggle ON/OFF
+            'gain': 2,
+            'volume': 1,  # Incrementos de 1
+            'memory': 1,  # Cambiar slots
+            'vox': 1  # Toggle ON/OFF
+        }
+        
+        # Rangos
+        ranges = {
+            'frequency': (108.0e6, 137.0e6),
+            'autoscan': (0, 1),
+            'gain': (0, 50),
+            'volume': (0, 100),
+            'memory': (1, 10),  # 10 slots
+            'vox': (0, 1)
+        }
+        
+        current = self.state[menu]
+        step = steps[menu]
+        min_val, max_val = ranges[menu]
+        
+        # Multiplicador de step para frecuencia (acelera aún más en hold largo)
+        if menu == 'frequency':
+            if self.hold_count < 5:
+                multiplier = 1  # 25 kHz
+            elif self.hold_count < 10:
+                multiplier = 4  # 100 kHz
+            else:
+                multiplier = 10  # 250 kHz - máximo
+            step = step * multiplier
+        
+        # Incrementar
+        new_value = min(current + step, max_val)
+        
+        # Solo actualizar si cambió
+        if new_value != current:
+            self.state[menu] = new_value
+            
+            # Actualizar display
+            self._update_menu_value_display()
+            self._update_all_value_labels()
+            
+            # Notificar
+            if self.on_control_change:
+                self.on_control_change(menu, new_value)
+            
+            # Log solo si no es repetición rápida
+            if self.hold_count < 3:
+                print(f"➕ {menu}: {new_value}")
+    
+    def _on_save_memory(self):
+        """Callback para guardar memoria actual (simula hold del botón menu)"""
+        if self.state['current_menu'] == 'memory':
+            memory_slot = self.state['memory']
+            print(f"💾 Guardando frecuencia actual en memoria M{memory_slot}")
+    
+    def _on_minus_button(self):
+        """Callback botón - - decrementar valor actual o cambiar valor en submenú"""
+        # Si el submenú está abierto, cambiar valor
+        if self.state.get('submenu_open', False):
+            if self.on_control_change:
+                self.on_control_change('submenu_change_value', -1)
+            return
+        
+        menu = self.state['current_menu']
+        
+        # Pasos
+        steps = {
+            'frequency': 25000,  # 25 kHz en Hz
+            'autoscan': 1,  # Toggle ON/OFF
+            'gain': 2,
+            'volume': 1,  # Incrementos de 1
+            'memory': 1,
+            'vox': 1
+        }
+        
+        # Rangos
+        ranges = {
+            'frequency': (108.0e6, 137.0e6),
+            'autoscan': (0, 1),
+            'gain': (0, 50),
+            'volume': (0, 100),
+            'memory': (1, 10),
+            'vox': (0, 1)
+        }
+        
+        current = self.state[menu]
+        step = steps[menu]
+        min_val, max_val = ranges[menu]
+        
+        # Multiplicador de step para frecuencia (acelera aún más en hold largo)
+        if menu == 'frequency':
+            if self.hold_count < 5:
+                multiplier = 1  # 25 kHz
+            elif self.hold_count < 10:
+                multiplier = 4  # 100 kHz
+            else:
+                multiplier = 10  # 250 kHz - máximo
+            step = step * multiplier
+        
+        # Decrementar
+        new_value = max(current - step, min_val)
+        
+        # Solo actualizar si cambió
+        if new_value != current:
+            self.state[menu] = new_value
+            
+            # Actualizar display
+            self._update_menu_value_display()
+            self._update_all_value_labels()
+            
+            # Notificar
+            if self.on_control_change:
+                self.on_control_change(menu, new_value)
+            
+            # Log solo si no es repetición rápida
+            if self.hold_count < 3:
+                print(f"➖ {menu}: {new_value}")
+    
+    def _update_menu_value_display(self):
+        """Actualizar el display del valor del menú activo"""
+        menu = self.state['current_menu']
+        value = self.state[menu]
+        
+        # Formatear según tipo
+        if menu == 'frequency':
+            text = f"{value/1e6:.3f} MHz"
+        elif menu in ['autoscan', 'vox']:
+            text = "ON" if value == 1 else "OFF"
+        elif menu == 'gain':
+            text = f"{value} dB"
+        elif menu == 'memory':
+            text = f"M{int(value)}"
+        else:
+            text = f"{value}%"
+            
+    def _update_all_value_labels(self):
+        """Actualizar todos los labels de valores"""
+        self.widgets['frequency_val'].config(text=f"{self.state['frequency']/1e6:.3f} MHz")
+        autoscan_text = "ON" if self.state['autoscan'] == 1 else "OFF"
+        self.widgets['autoscan_val'].config(text=autoscan_text)
+        self.widgets['gain_val'].config(text=f"{self.state['gain']} dB")
+        self.widgets['volume_val'].config(text=f"{self.state['volume']}%")
+        self.widgets['memory_val'].config(text=f"M{int(self.state['memory'])}")
+        vox_text = "ON" if self.state['vox'] == 1 else "OFF"
+        self.widgets['vox_val'].config(text=vox_text)
+    
+    def update_state(self, key, value):
+        """Actualizar estado desde el sistema principal"""
+        if key in self.state:
+            self.state[key] = value
+            self._update_all_value_labels()
+    
+    def _on_volume_change(self, value):
+        """DEPRECATED - Ya no se usa slider de volumen"""
+        pass
     
     def _on_gain_change(self, value):
-        """Callback cambio de ganancia"""
-        gain = int(float(value))
-        self.state['gain'] = gain
-        self.widgets['gain_label'].config(text=f"{gain} dB")
-        
-        if self.on_control_change:
-            self.on_control_change('gain', gain)
+        """DEPRECATED - Ya no se usa slider de ganancia"""
+        pass
     
     def _on_squelch_change(self, value):
-        """Callback cambio de squelch"""
-        sq = int(float(value))
-        self.state['squelch'] = sq
-        self.widgets['squelch_label'].config(text=f"{sq}%")
-        
-        if self.on_control_change:
-            self.on_control_change('squelch', sq)
+        """DEPRECATED - Ya no se usa slider de squelch"""
+        pass
     
     def _on_frequency_slider_change(self, value):
-        """Callback cambio de frecuencia por slider"""
-        freq = float(value)
-        self.state['frequency'] = freq
-        self.widgets['freq_label'].config(text=f"{freq:.3f} MHz")
-        self.widgets['freq_entry'].delete(0, tk.END)
-        self.widgets['freq_entry'].insert(0, f"{freq:.3f}")
-        
-        if self.on_control_change:
-            freq_hz = int(freq * 1e6)
-            self.on_control_change('frequency', freq_hz)
+        """DEPRECATED - Ya no se usa slider de frecuencia"""
+        pass
     
     def _on_frequency_apply(self):
-        """Aplicar frecuencia ingresada"""
-        try:
-            freq = float(self.widgets['freq_entry'].get())
-            self._set_frequency(freq)
-        except ValueError:
-            messagebox.showerror("Error", "Frecuencia inválida")
+        """DEPRECATED - Ya no se usa entrada manual de frecuencia"""
+        pass
     
     def _set_frequency(self, freq_mhz: float):
-        """Establecer frecuencia"""
-        self.state['frequency'] = freq_mhz
-        self.widgets['freq_entry'].delete(0, tk.END)
-        self.widgets['freq_entry'].insert(0, str(freq_mhz))
-        
-        # Actualizar slider si está en rango VHF
-        if 108.0 <= freq_mhz <= 137.0:
-            self.widgets['freq_slider'].set(freq_mhz)
-            self.widgets['freq_label'].config(text=f"{freq_mhz:.3f} MHz")
-        
-        if self.on_control_change:
-            freq_hz = int(freq_mhz * 1e6)
-            self.on_control_change('frequency', freq_hz)
-        
-        logger.info(f"✅ Frecuencia: {freq_mhz} MHz")
+        """DEPRECATED - Ya no se usa entrada manual de frecuencia"""
+        pass
     
     def _toggle_recording(self):
         """Alternar grabación"""
@@ -500,7 +702,7 @@ class SimulatorGUI:
         if self.on_control_change:
             self.on_control_change('mode', mode)
         
-        logger.info(f"✅ Modo: {mode}")
+        print(f"✅ Modo: {mode}")
     
     def _simulate_aircraft(self, aircraft_type: str):
         """Simula la detección de un avión"""
@@ -546,7 +748,7 @@ class SimulatorGUI:
         if self.on_control_change:
             self.on_control_change('aircraft_detected', aircraft)
         
-        logger.info(f"✈️ Avión simulado: {aircraft['callsign']} @ {aircraft['altitude']}ft")
+        print(f"✈️ Avión simulado: {aircraft['callsign']} @ {aircraft['altitude']}ft")
     
     def _clear_aircraft(self):
         """Limpiar lista de aviones"""
@@ -554,7 +756,7 @@ class SimulatorGUI:
             count = len(self.state['aircraft_data'])
             self.state['aircraft_data'].clear()
             self._update_aircraft_list()
-            logger.info(f"🧹 {count} aviones eliminados")
+            print(f"🧹 {count} aviones eliminados")
     
     def _update_aircraft_list(self):
         """Actualiza la lista de aviones en la UI"""
@@ -576,14 +778,20 @@ class SimulatorGUI:
     
     def _reset_values(self):
         """Resetea todos los valores a defaults"""
-        self.widgets['volume_slider'].set(60)
-        self.widgets['gain_slider'].set(25)
-        self.widgets['squelch_slider'].set(10)
-        self.widgets['freq_entry'].delete(0, tk.END)
-        self.widgets['freq_entry'].insert(0, "125.0")
-        self.widgets['mode_var'].set('VHF_AM')
+        # Resetear menú a frequency
+        self.menu_index = 0
+        self.state['current_menu'] = 'frequency'
         
-        logger.info("🔄 Valores reseteados")
+        # Resetear valores
+        self.state['frequency'] = 125.0e6
+        self.state['volume'] = 50
+        self.state['gain'] = 30
+        self.state['autoscan'] = 0
+        
+        self._update_menu_value_display()
+        self._update_all_value_labels()
+        
+        print("🔄 Valores reseteados")
     
     def _show_help(self):
         """Muestra ayuda"""
@@ -591,9 +799,14 @@ class SimulatorGUI:
 🎭 FlyM Simulator - Ayuda
 
 CONTROLES:
-• Volumen: 0-100% (ajusta volumen de audio)
-• Ganancia: 0-50 dB (ganancia del receptor)
-• Squelch: 0-100% (umbral de ruido)
+• Menú: Cambia entre pantallas
+• +/-: Ajusta el valor del menú activo
+
+MENÚS:
+• Frecuencia: 108-137 MHz (pasos 25 kHz)
+• Auto-Scan: ON/OFF (búsqueda automática)
+• Ganancia: 0-50 dB (filtro de ruido)
+• Volumen: 0-100%
 
 FRECUENCIAS COMUNES:
 • 118-137 MHz: Banda de aviación VHF
@@ -623,11 +836,11 @@ SIMULACIÓN:
             rssi = -80 + random.randint(0, 40)
             self.widgets['rssi_label'].config(text=f"{rssi} dB")
             
-            # Actualizar squelch status
-            if self.state['squelch'] < 30:
-                self.widgets['squelch_status'].config(text="🟢 Abierto")
+            # Actualizar autoscan status
+            if self.state['autoscan'] == 1:
+                self.widgets['autoscan_status'].config(text="🔄 ON")
             else:
-                self.widgets['squelch_status'].config(text="⚫ Cerrado")
+                self.widgets['autoscan_status'].config(text="⚫ OFF")
             
             # Actualizar display OLED
             self._update_oled_display()
@@ -702,9 +915,7 @@ SIMULACIÓN:
         if messagebox.askokcancel("Salir", "¿Cerrar el Control Panel?"):
             self.stop()
     
-    def update_state(self, new_state: Dict[str, Any]):
-        """Actualiza el estado desde fuera"""
-        self.state.update(new_state)
+
 
 
 # Singleton global
@@ -715,4 +926,9 @@ def get_gui_controller(callback: Optional[Callable] = None) -> SimulatorGUI:
     global _gui_instance
     if _gui_instance is None:
         _gui_instance = SimulatorGUI(on_control_change=callback)
+    else:
+        # Actualizar callback si se proporciona uno nuevo
+        if callback is not None:
+            print(f"🔄 Actualizando callback de GUI con nuevo callback")
+            _gui_instance.on_control_change = callback
     return _gui_instance

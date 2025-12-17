@@ -41,44 +41,98 @@ class ControlsManager:
         self.config = config
         self.callback = callback
         
-        # ADC para potenciómetros
-        self.adc = None
-        self.volume_channel = config.get('volume_pot_channel', 0)
-        self.gain_channel = config.get('gain_pot_channel', 1)
-        self.squelch_channel = config.get('squelch_pot_channel', 2)
+        # Obtener configuración de pines GPIO (soporta ambos formatos)
+        gpio_pins = config.get('gpio_pins', {})
+        self.button_menu = gpio_pins.get('button_menu') or config.get('button_menu_pin', 17)
+        self.button_plus = gpio_pins.get('button_plus') or config.get('button_plus_pin', 27)
+        self.button_minus = gpio_pins.get('button_minus') or config.get('button_minus_pin', 22)
+        self.record_button = gpio_pins.get('button_record') or config.get('record_button_pin', 23)
+        self.record_led = gpio_pins.get('led_record') or config.get('record_led_pin', 24)
         
-        # Botón de grabación y LED
-        self.record_button = config.get('record_button_pin', 22)
-        self.record_led = config.get('record_led_pin', 23)
+        # Obtener configuración de menús
+        menus_config = config.get('menus', {})
+        self.MENUS = menus_config.get('order', ['frequency', 'autoscan', 'gain', 'volume', 'memory', 'vox'])
         
-        # Cache de valores para evitar callbacks innecesarios
-        self.last_volume = 0
-        self.last_gain = 0
-        self.last_squelch = 0
+        # Estado del menú
+        self.current_menu_index = 0
+        
+        # Cargar configuración de cada menú para valores por defecto, pasos y rangos
+        self.values = {}
+        self.steps = {}
+        self.ranges = {}
+        
+        for menu_name in self.MENUS:
+            menu_cfg = menus_config.get(menu_name, {})
+            
+            # Valores por defecto
+            if menu_name == 'frequency':
+                default_val = menu_cfg.get('default', 125.0) * 1e6  # Convertir MHz a Hz
+                self.values[menu_name] = default_val
+                self.steps[menu_name] = int(menu_cfg.get('step', 0.025) * 1e6)  # MHz a Hz
+                min_hz = menu_cfg.get('min', 108.0) * 1e6
+                max_hz = menu_cfg.get('max', 137.0) * 1e6
+                self.ranges[menu_name] = (min_hz, max_hz)
+            else:
+                self.values[menu_name] = menu_cfg.get('default', 0)
+                self.steps[menu_name] = menu_cfg.get('step', 1)
+                self.ranges[menu_name] = (menu_cfg.get('min', 0), menu_cfg.get('max', 100))
+        
+        # Variables para detectar hold del botón menu
+        self.menu_button_press_time = None
+        self.menu_button_hold_threshold = 1.0  # 1 segundo para hold
+        
+        # Variables para aceleración en hold de +/-
+        self.button_hold_active = None  # 'plus' o 'minus'
+        self.button_hold_count = 0
+        self.button_hold_timer = None
         
         self._initialize_gpio()
-        self._initialize_adc()
     
     def _initialize_gpio(self):
-        """Inicializar GPIO para botón y LED o simulador"""
+        """Inicializar GPIO para botones y LED o simulador"""
         if not GPIO_AVAILABLE:
             # Modo simulación
             from simulation.mock_gpio import MockGPIO
             global GPIO
             GPIO = MockGPIO
-            logger.info("🎭 Usando MockGPIO (modo simulación)")
+            print("🎭 Usando MockGPIO (modo simulación)")
         
         try:
             # Configurar GPIO (funciona igual en real y mock)
             GPIO.setmode(GPIO.BCM)
             GPIO.setwarnings(False)
             
+            # Botones de control
+            GPIO.setup(self.button_menu, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+            GPIO.setup(self.button_plus, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+            GPIO.setup(self.button_minus, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+            
             # Botón de grabación y LED
             GPIO.setup(self.record_button, GPIO.IN, pull_up_down=GPIO.PUD_UP)
             GPIO.setup(self.record_led, GPIO.OUT)
             GPIO.output(self.record_led, GPIO.LOW)  # LED apagado inicialmente
             
-            # Configurar interrupción del botón
+            # Configurar interrupciones de botones
+            # Botón menú con detección de press y release
+            GPIO.add_event_detect(
+                self.button_menu,
+                GPIO.BOTH,  # Detectar tanto press como release
+                callback=self._menu_button_callback,
+                bouncetime=50
+            )
+            # Botones + y - con detección de press y release para aceleración
+            GPIO.add_event_detect(
+                self.button_plus,
+                GPIO.BOTH,
+                callback=self._plus_button_callback,
+                bouncetime=50
+            )
+            GPIO.add_event_detect(
+                self.button_minus,
+                GPIO.BOTH,
+                callback=self._minus_button_callback,
+                bouncetime=50
+            )
             GPIO.add_event_detect(
                 self.record_button,
                 GPIO.FALLING,
@@ -87,121 +141,248 @@ class ControlsManager:
             )
             
             mode_text = "🎭 simulado" if not GPIO_AVAILABLE else "📡 real"
-            logger.info(f"✅ GPIO {mode_text} inicializado")
-            logger.info(f"   Botón grabación: GPIO{self.record_button}")
-            logger.info(f"   LED: GPIO{self.record_led}")
+            print(f"✅ GPIO {mode_text} inicializado")
+            print(f"   Botón Menú: GPIO{self.button_menu}")
+            print(f"   Botón +: GPIO{self.button_plus}")
+            print(f"   Botón -: GPIO{self.button_minus}")
+            print(f"   Botón grabación: GPIO{self.record_button}")
+            print(f"   LED: GPIO{self.record_led}")
             
         except Exception as e:
             logger.error(f"❌ Error al inicializar GPIO: {e}")
     
-    def _initialize_adc(self):
-        """Inicializar ADC MCP3008 para potenciómetros o simulador"""
-        if not SPI_AVAILABLE:
-            # Modo simulación
-            from simulation.mock_gpio import MockMCP3008
-            self.adc = MockMCP3008()
-            logger.info("🎭 Usando MockMCP3008 (modo simulación)")
-            logger.info("💡 Usa la GUI principal para controlar los potenciómetros")
-        else:
-            try:
-                self.adc = MCP3008()
-                logger.info("📡 ADC MCP3008 real inicializado")
-            except Exception as e:
-                logger.error(f"❌ Error al inicializar ADC: {e}")
-                return
-        
-        logger.info(f"✅ ADC configurado:")
-        logger.info(f"   Volumen: Canal {self.volume_channel}")
-        logger.info(f"   Ganancia: Canal {self.gain_channel}")
-        logger.info(f"   Squelch: Canal {self.squelch_channel}")
-    
-    def _open_potentiometer_gui(self):
-        """Abrir GUI de control de potenciómetros en modo simulación"""
+    def _menu_button_callback(self, channel):
+        """Callback para botón de menú - cambiar entre pantallas (click) o abrir submenú (hold)"""
         try:
-            from simulation.potentiometer_gui import create_potentiometer_gui
-            import threading
+            button_state = GPIO.input(self.button_menu)
+            current_time = time.time()
             
-            # Obtener el MockSpiDev del MockMCP3008
-            mock_spidev = self.adc.spi
-            
-            # Crear y ejecutar GUI en thread separado
-            def run_gui():
-                try:
-                    gui = create_potentiometer_gui(mock_spidev)
-                    logger.info("🎛️ GUI de potenciómetros abierta")
-                    gui.run()
-                except Exception as e:
-                    logger.error(f"Error en GUI de potenciómetros: {e}")
-            
-            gui_thread = threading.Thread(target=run_gui, daemon=True)
-            gui_thread.start()
-            
+            if button_state == GPIO.LOW:  # Botón presionado
+                self.menu_button_press_time = current_time
+                
+            else:  # Botón liberado
+                if self.menu_button_press_time is None:
+                    return
+                
+                hold_duration = current_time - self.menu_button_press_time
+                self.menu_button_press_time = None
+                
+                # HOLD detectado - abrir/cerrar submenú
+                if hold_duration >= self.menu_button_hold_threshold:
+                    print(f"⚙️ HOLD detectado - abriendo submenú...")
+                    if self.callback:
+                        self.callback('submenu_toggle', None)
+                    return
+                
+                # Click normal - cambiar de menú o confirmar en submenú
+                if hold_duration < self.menu_button_hold_threshold:
+                    if self.callback:
+                        self.callback('menu_click', None)
+                        
         except Exception as e:
-            logger.warning(f"⚠️ No se pudo abrir GUI de potenciómetros: {e}")
+            logger.error(f"Error en callback de botón menú: {e}")
+    
+    def _plus_button_callback(self, channel):
+        """Callback para botón + - incrementar valor actual con aceleración en hold"""
+        try:
+            button_state = GPIO.input(self.button_plus)
+            
+            if button_state == GPIO.LOW:  # Botón presionado
+                # Primer cambio inmediato
+                self._increment_value()
+                
+                # Iniciar hold con aceleración
+                self.button_hold_active = 'plus'
+                self.button_hold_count = 0
+                self._schedule_hold_repeat()
+                
+            else:  # Botón liberado
+                # Detener hold
+                self.button_hold_active = None
+                if self.button_hold_timer:
+                    try:
+                        self.button_hold_timer.cancel()
+                    except:
+                        pass
+                    self.button_hold_timer = None
+                    
+        except Exception as e:
+            logger.error(f"Error en callback de botón +: {e}")
+    
+    def _increment_value(self):
+        """Incrementar valor del control actual o cambiar valor en submenú"""
+        try:
+            # Si el callback existe y retorna True, significa que manejó el submenú
+            if self.callback and self.callback('submenu_change_value', 1):
+                return
+            
+            menu_name = self.MENUS[self.current_menu_index]
+            current = self.values[menu_name]
+            step = self.steps[menu_name]
+            min_val, max_val = self.ranges[menu_name]
+            
+            # Multiplicador de step para frecuencia (acelera aún más en hold largo)
+            if menu_name == 'frequency':
+                if self.button_hold_count < 5:
+                    multiplier = 1  # 25 kHz
+                elif self.button_hold_count < 10:
+                    multiplier = 4  # 100 kHz
+                else:
+                    multiplier = 10  # 250 kHz - máximo
+                step = step * multiplier
+            
+            # Incrementar valor
+            new_value = min(current + step, max_val)
+            
+            if new_value != current:
+                self.values[menu_name] = new_value
+                
+                # Log solo si no es repetición rápida
+                if self.button_hold_count < 3:
+                    print(f"➕ {menu_name}: {new_value}")
+                
+                if self.callback:
+                    self.callback(menu_name, new_value)
+        except Exception as e:
+            logger.error(f"Error al incrementar valor: {e}")
+    
+    def _minus_button_callback(self, channel):
+        """Callback para botón - - decrementar valor actual con aceleración en hold"""
+        try:
+            button_state = GPIO.input(self.button_minus)
+            
+            if button_state == GPIO.LOW:  # Botón presionado
+                # Primer cambio inmediato
+                self._decrement_value()
+                
+                # Iniciar hold con aceleración
+                self.button_hold_active = 'minus'
+                self.button_hold_count = 0
+                self._schedule_hold_repeat()
+                
+            else:  # Botón liberado
+                # Detener hold
+                self.button_hold_active = None
+                if self.button_hold_timer:
+                    try:
+                        self.button_hold_timer.cancel()
+                    except:
+                        pass
+                    self.button_hold_timer = None
+                    
+        except Exception as e:
+            logger.error(f"Error en callback de botón -: {e}")
+    
+    def _decrement_value(self):
+        """Decrementar valor del control actual o cambiar valor en submenú"""
+        try:
+            # Si el callback existe y retorna True, significa que manejó el submenú
+            if self.callback and self.callback('submenu_change_value', -1):
+                return
+            
+            menu_name = self.MENUS[self.current_menu_index]
+            current = self.values[menu_name]
+            step = self.steps[menu_name]
+            min_val, max_val = self.ranges[menu_name]
+            
+            # Multiplicador de step para frecuencia (acelera aún más en hold largo)
+            if menu_name == 'frequency':
+                if self.button_hold_count < 5:
+                    multiplier = 1  # 25 kHz
+                elif self.button_hold_count < 10:
+                    multiplier = 4  # 100 kHz
+                else:
+                    multiplier = 10  # 250 kHz - máximo
+                step = step * multiplier
+            
+            # Decrementar valor
+            new_value = max(current - step, min_val)
+            
+            if new_value != current:
+                self.values[menu_name] = new_value
+                
+                # Log solo si no es repetición rápida
+                if self.button_hold_count < 3:
+                    print(f"➖ {menu_name}: {new_value}")
+                
+                if self.callback:
+                    self.callback(menu_name, new_value)
+        except Exception as e:
+            logger.error(f"Error al decrementar valor: {e}")
+    
+    def _schedule_hold_repeat(self):
+        """Programar siguiente repetición con aceleración progresiva"""
+        if self.button_hold_active is None:
+            return
+        
+        # Aceleración progresiva
+        if self.button_hold_count < 3:
+            delay = 0.4  # Lento al inicio (400ms)
+        elif self.button_hold_count < 6:
+            delay = 0.2  # Medio (200ms)
+        elif self.button_hold_count < 10:
+            delay = 0.1  # Rápido (100ms)
+        else:
+            delay = 0.05  # Muy rápido (50ms)
+        
+        # Programar siguiente ejecución
+        from threading import Timer
+        self.button_hold_timer = Timer(delay, self._execute_hold_repeat)
+        self.button_hold_timer.daemon = True
+        self.button_hold_timer.start()
+    
+    def _execute_hold_repeat(self):
+        """Ejecutar repetición durante hold"""
+        if self.button_hold_active is None:
+            return
+        
+        self.button_hold_count += 1
+        
+        # Ejecutar cambio según dirección
+        if self.button_hold_active == 'plus':
+            self._increment_value()
+        elif self.button_hold_active == 'minus':
+            self._decrement_value()
+        
+        # Programar siguiente repetición
+        self._schedule_hold_repeat()
     
     def _record_button_callback(self, channel):
         """Callback para botón de grabación"""
         try:
-            logger.info("🔴 Botón de grabación presionado")
+            print("🔴 Botón de grabación presionado")
             if self.callback:
                 self.callback('record_button', True)
         except Exception as e:
             logger.error(f"Error en callback de botón: {e}")
     
+    def get_current_menu(self):
+        """Obtener el menú actual"""
+        return self.MENUS[self.current_menu_index]
+    
+    def set_value(self, control, value):
+        """Establecer valor de un control externamente (para GUI)"""
+        if control in self.values:
+            min_val, max_val = self.ranges[control]
+            self.values[control] = max(min_val, min(value, max_val))
+    
+    def get_value(self, control):
+        """Obtener valor actual de un control"""
+        return self.values.get(control, 0)
+    
     def read_potentiometers(self):
-        """Leer valores de los tres potenciómetros"""
-        if self.adc is None:
-            return None, None, None
-        
-        try:
-            # Mapeo de canales a rangos (channel, max_value)
-            pots = {
-                'volume': (self.volume_channel, 100),
-                'gain': (self.gain_channel, 50),
-                'squelch': (self.squelch_channel, 100)
-            }
-            
-            # Leer todos los valores
-            values = {}
-            for name, (channel, max_val) in pots.items():
-                raw = self.adc.read(channel)
-                values[name] = int((raw / 1023) * max_val)
-            
-            return values['volume'], values['gain'], values['squelch']
-            
-        except Exception as e:
-            logger.error(f"Error al leer potenciómetros: {e}")
-            return None, None, None
+        """DEPRECATED - Ya no se usan potenciómetros"""
+        return None, None, None
     
     def monitor_loop(self, shutdown_event):
-        """Loop de monitoreo de potenciómetros"""
-        logger.info("🎛️  Iniciando monitoreo de potenciómetros...")
+        """Loop de monitoreo - ya no es necesario con botones"""
+        print("🎛️  Sistema de botones activo (no requiere polling)")
         
-        # Umbral de cambio para cada control
-        thresholds = {'volume': 2, 'gain': 1, 'squelch': 2}
-        last_values = {'volume': self.last_volume, 'gain': self.last_gain, 'squelch': self.last_squelch}
-        
+        # Mantener el thread vivo
         while not shutdown_event.is_set():
-            try:
-                volume, gain, squelch = self.read_potentiometers()
-                
-                if all(v is not None for v in [volume, gain, squelch]):
-                    current = {'volume': volume, 'gain': gain, 'squelch': squelch}
-                    
-                    # Verificar cambios significativos
-                    for control, value in current.items():
-                        if abs(value - last_values[control]) > thresholds[control]:
-                            last_values[control] = value
-                            if self.callback:
-                                self.callback(control, value)
-                
-                time.sleep(0.1)  # Leer cada 100ms
-                
-            except Exception as e:
-                logger.error(f"Error en monitor loop: {e}")
-                time.sleep(1)
+            time.sleep(1)
         
-        logger.info("🛑 Monitor de potenciómetros detenido")
+        print("🛑 Monitor de controles detenido")
     
     def set_record_led(self, state):
         """Controlar LED de grabación"""
@@ -221,71 +402,15 @@ class ControlsManager:
                 logger.error(f"Error al parpadear LED: {e}")
     
     def cleanup(self):
-        """Limpiar recursos GPIO y SPI"""
+        """Limpiar recursos GPIO"""
         if GPIO:
             try:
                 # Apagar LED antes de limpiar
                 self.set_record_led(False)
                 GPIO.cleanup()
-                logger.info("✅ GPIO limpiado")
+                print("✅ GPIO limpiado")
             except Exception as e:
                 logger.error(f"Error al limpiar GPIO: {e}")
-        
-        if self.adc:
-            try:
-                self.adc.close()
-                logger.info("✅ ADC cerrado")
-            except Exception as e:
-                logger.error(f"Error al cerrar ADC: {e}")
-
-
-class MCP3008:
-    """Interfaz para ADC MCP3008 via SPI"""
-    
-    # Constantes
-    MAX_VALUE = 1023
-    NUM_CHANNELS = 8
-    DEFAULT_SPEED = 1350000  # 1.35 MHz
-    
-    def __init__(self, bus=0, device=0):
-        """Inicializar MCP3008"""
-        if spidev is None:
-            raise ImportError("spidev es necesario para MCP3008")
-        
-        self.spi = spidev.SpiDev()
-        self.spi.open(bus, device)
-        self.spi.max_speed_hz = self.DEFAULT_SPEED
-        self.spi.mode = 0
-    
-    def read(self, channel):
-        """Leer valor de un canal ADC (0-1023)"""
-        if not 0 <= channel < self.NUM_CHANNELS:
-            raise ValueError(f"Canal debe estar entre 0 y {self.NUM_CHANNELS-1}")
-        
-        # Comando SPI: start bit, single-ended, channel
-        cmd = [1, (8 + channel) << 4, 0]
-        result = self.spi.xfer2(cmd)
-        
-        # Extraer valor de 10 bits
-        return ((result[1] & 3) << 8) + result[2]
-    
-    def read_voltage(self, channel, vref=3.3):
-        """Leer voltaje de un canal (0-vref V)"""
-        value = self.read(channel)
-        return (value / self.MAX_VALUE) * vref
-    
-    def read_percent(self, channel):
-        """Leer valor como porcentaje (0-100%)"""
-        value = self.read(channel)
-        return int((value / self.MAX_VALUE) * 100)
-    
-    def close(self):
-        """Cerrar interfaz SPI"""
-        if self.spi:
-            self.spi.close()
-
-
-# Simuladores para desarrollo removidos (no se necesita EncoderSimulator)
 
 
 class KeyboardControls:
@@ -303,11 +428,11 @@ class KeyboardControls:
         self.volume = 50
         self.gain = 30
         
-        logger.info("⌨️  Controles por teclado activados:")
-        logger.info("   [W/S] - Frecuencia")
-        logger.info("   [A/D] - Volumen")
-        logger.info("   [Q/E] - Ganancia")
-        logger.info("   [M] - Cambiar modo")
+        print("⌨️  Controles por teclado activados:")
+        print("   [W/S] - Frecuencia")
+        print("   [A/D] - Volumen")
+        print("   [Q/E] - Ganancia")
+        print("   [M] - Cambiar modo")
     
     def process_key(self, key):
         """

@@ -55,7 +55,7 @@ class MockOLED:
         self.image = Image.new("1", (self.width, self.height))
         self.draw = ImageDraw.Draw(self.image)
         self._last_display = None
-        logger.info(f"🎭 MockOLED inicializado ({self.width}x{self.height})")
+        print(f"🎭 MockOLED inicializado ({self.width}x{self.height})")
     
     def display(self, image: Image.Image):
         """
@@ -94,30 +94,9 @@ class MockOLED:
         Imprime representación ASCII de la pantalla
         Muestra el contenido real de texto extraído de la imagen
         """
-        pixels = image.load()
-        
-        # Título con timestamp
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        
-        print("\n" + "=" * 70)
-        print(f"📺 OLED Display [{timestamp}]")
-        print("=" * 70)
-        
-        # Intentar extraer texto real de la imagen
-        text_content = self._extract_text_from_image(image)
-        
-        if text_content and text_content.strip():
-            # Mostrar texto extraído
-            print("┌" + "─" * 68 + "┐")
-            for line in text_content.strip().split('\n'):
-                if line.strip():
-                    print(f"│ {line:<66} │")
-            print("└" + "─" * 68 + "┘")
-        else:
-            # Fallback: mostrar representación gráfica
-            self._print_graphic_representation(image, pixels)
-        
-        print("=" * 70 + "\n")
+        # Deshabilitado para evitar spam en consola
+        # Solo loggear cambios significativos
+        pass
     
     def _extract_text_from_image(self, image: Image.Image) -> str:
         """

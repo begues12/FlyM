@@ -61,7 +61,7 @@ def load_config(config_path: str = 'config/config.yaml') -> Dict[str, Any]:
     # Si no existe, usar defaults
     if not config_file.exists():
         logger.warning(f"⚠️  Archivo no encontrado: {config_path}")
-        logger.info("📋 Usando configuración por defecto")
+        print("📋 Usando configuración por defecto")
         return get_default_config()
     
     # Cargar y validar
@@ -72,7 +72,7 @@ def load_config(config_path: str = 'config/config.yaml') -> Dict[str, Any]:
         # Validar estructura
         config = _validate_config(config)
         
-        logger.info(f"✅ Configuración cargada: {config_path}")
+        print(f"✅ Configuración cargada: {config_path}")
         return config
         
     except yaml.YAMLError as e:
@@ -80,7 +80,7 @@ def load_config(config_path: str = 'config/config.yaml') -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"❌ Error al cargar configuración: {e}")
     
-    logger.info("📋 Usando configuración por defecto")
+    print("📋 Usando configuración por defecto")
     return get_default_config()
 
 
@@ -180,7 +180,7 @@ def save_config(config: Dict[str, Any], config_path: str = 'config/config.yaml')
                 sort_keys=False
             )
         
-        logger.info(f"✅ Configuración guardada: {config_path}")
+        print(f"✅ Configuración guardada: {config_path}")
         return True
         
     except Exception as e:

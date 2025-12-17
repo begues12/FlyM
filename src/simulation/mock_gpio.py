@@ -83,13 +83,13 @@ class MockGPIO:
         """Limpia configuración GPIO"""
         cls._pins.clear()
         cls._callbacks.clear()
-        logger.info("🎭 GPIO cleanup realizado")
+        print("🎭 GPIO cleanup realizado")
     
     @classmethod
     def simulate_button_press(cls, pin: int):
         """Simula pulsación de botón (para testing)"""
         if pin in cls._callbacks and cls._callbacks[pin]:
-            logger.info(f"🎭 Simulando botón en pin {pin}")
+            print(f"🎭 Simulando botón en pin {pin}")
             cls._callbacks[pin](pin)
 
 
@@ -107,11 +107,11 @@ class MockSpiDev:
         """Abre conexión SPI"""
         self.bus = bus
         self.device = device
-        logger.info(f"🎭 SPI abierto: bus={bus}, device={device}")
+        print(f"🎭 SPI abierto: bus={bus}, device={device}")
     
     def close(self):
         """Cierra conexión SPI"""
-        logger.info("🎭 SPI cerrado")
+        print("🎭 SPI cerrado")
     
     def xfer2(self, data: list) -> list:
         """
@@ -174,7 +174,7 @@ class MockMCP3008:
         self.spi = MockSpiDev()
         self.spi.max_speed_hz = max_speed_hz
         self.spi.open(bus, device)
-        logger.info("🎭 MockMCP3008 inicializado")
+        print("🎭 MockMCP3008 inicializado")
     
     def read(self, channel: int) -> int:
         """
@@ -204,7 +204,7 @@ class MockMCP3008:
     def close(self):
         """Cierra conexión SPI"""
         self.spi.close()
-        logger.info("🎭 MockMCP3008 cerrado")
+        print("🎭 MockMCP3008 cerrado")
 
 
 # Instancia global para simulación

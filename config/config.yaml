@@ -1,7 +1,116 @@
 # Configuración FlyM Aviation Receiver
 # =====================================
 
-# Configuración del SDR (RTL-SDR)
+# ========================================
+# CONFIGURACIÓN DE HARDWARE - PINES GPIO
+# ========================================
+gpio_pins:
+  # Botones de control (GPIO BCM numbering)
+  button_menu: 17               # Botón para cambiar de menú (hold en memory = guardar)
+  button_plus: 27               # Botón para incrementar valor (hold = aceleración progresiva)
+  button_minus: 22              # Botón para decrementar valor (hold = aceleración progresiva)
+  button_record: 23             # Botón de grabación manual
+  
+  # LEDs indicadores
+  led_record: 24                # LED indicador de grabación activa
+  led_power: null               # LED de encendido (null = no usado)
+  led_activity: null            # LED de actividad (null = no usado)
+  
+  # Aceleración en hold de botones +/-
+  # Al mantener presionado, la velocidad aumenta progresivamente:
+  # - Inicio (0-3 cambios): 400ms (2.5 cambios/seg) - Control preciso
+  # - Medio (3-6 cambios): 200ms (5 cambios/seg) - Acelera
+  # - Rápido (6-10 cambios): 100ms (10 cambios/seg) - Rápido
+  # - Máximo (>10 cambios): 50ms (20 cambios/seg) - Muy rápido
+  #
+  # FRECUENCIA: Multiplicador adicional de step en hold largo
+  # - Normal (0-5): 25 kHz/paso
+  # - Rápido (5-10): 100 kHz/paso (4x)
+  # - Máximo (>10): 250 kHz/paso (10x)
+  # → Permite recorrer 108-137 MHz (29 MHz) en ~6 segundos
+
+# ========================================
+# CONFIGURACIÓN DE PANTALLAS OLED
+# ========================================
+display:
+  # Pantalla principal
+  main_display:
+    address: 0x3C               # Dirección I²C de la pantalla OLED
+    i2c_port: 1                 # Puerto I²C (1 para Raspberry Pi)
+    width: 128                  # Ancho en píxeles
+    height: 32                  # Alto en píxeles
+    enabled: true               # Habilitar pantalla
+  
+  # Configuración de vistas
+  view_timeout: 3               # Segundos antes de volver a vista principal
+  auto_return_main: true        # Volver automáticamente a vista principal
+
+# ========================================
+# ORDEN Y CONFIGURACIÓN DE MENÚS
+# ========================================
+menus:
+  # Orden de navegación (se cicla con botón MENU)
+  order:
+    - frequency                 # Sintonización de frecuencia
+    - autoscan                  # Escaneo automático
+    - gain                      # Ganancia SDR
+    - volume                    # Control de volumen
+    - memory                    # Memorias (10 slots)
+    - vox                       # VOX (grabación automática)
+  
+  # Configuración de cada menú
+  frequency:
+    name: "FREQUENCY"           # Nombre mostrado
+    min: 108.0                  # MHz mínimo
+    max: 137.0                  # MHz máximo
+    step: 0.025                 # Paso en MHz (25 kHz)
+    default: 125.0              # Frecuencia por defecto en MHz
+    format: "{:.3f} MHz"        # Formato de visualización
+  
+  autoscan:
+    name: "AUTO-SCAN"
+    min: 0                      # 0=OFF
+    max: 1                      # 1=ON
+    step: 1
+    default: 0
+    format: "ON/OFF"
+  
+  gain:
+    name: "GAIN"
+    min: 0                      # dB mínimo
+    max: 50                     # dB máximo
+    step: 2                     # Paso en dB
+    default: 30                 # Ganancia por defecto
+    format: "{} dB"
+  
+  volume:
+    name: "VOLUME"
+    min: 0                      # % mínimo
+    max: 100                    # % máximo
+    step: 1                     # Paso (1 en 1)
+    default: 50                 # Volumen por defecto
+    format: "{}%"
+    logarithmic: true           # Usar escala logarítmica
+  
+  memory:
+    name: "MEMORY"
+    min: 1                      # Slot 1
+    max: 10                     # Slot 10
+    step: 1
+    default: 1
+    format: "M{}"
+  
+  vox:
+    name: "VOX"
+    min: 0                      # 0=OFF
+    max: 1                      # 1=ON
+    step: 1
+    default: 0
+    format: "ON/OFF"
+
+# ========================================
+# CONFIGURACIÓN DEL SDR (RTL-SDR)
+# ========================================
 sdr:
   sample_rate: 2048000          # Tasa de muestreo en Hz (2.048 MHz)
   default_frequency: 125000000  # Frecuencia inicial en Hz (125 MHz)
@@ -9,7 +118,9 @@ sdr:
   buffer_size: 262144           # Tamaño del buffer (256K muestras)
   audio_rate: 48000             # Tasa de muestreo de audio en Hz
 
-# Configuración de Audio (PCM5102 DAC)
+# ========================================
+# CONFIGURACIÓN DE AUDIO (PCM5102 DAC)
+# ========================================
 audio:
   sample_rate: 48000            # Tasa de muestreo en Hz
   channels: 1                   # 1=Mono, 2=Estéreo
@@ -19,29 +130,26 @@ audio:
   buffer_size: 2048             # Tamaño del buffer de audio
   squelch: true                 # Activar squelch (silenciar ruido)
   squelch_threshold: 0.01       # Umbral de squelch (0.0-1.0)
-  recordings_path: '/home/pi/flym/recordings'  # Ruta para grabaciones
+  recordings_path: 'recordings' # Ruta para grabaciones (relativa al proyecto)
   recording_format: 'wav'       # Formato de archivo (wav)
 
-# Configuración de pantalla OLED (una única pantalla con vistas dinámicas)
-display:
-  display_address: 0x3C         # Dirección I²C de la pantalla OLED
-  i2c_port: 1                   # Puerto I²C (1 para Raspberry Pi)
-  view_timeout: 3               # Segundos antes de volver a vista principal
-
-# Configuración de Controles
-controls:
-  volume_pot_channel: 0         # Canal ADC para potenciómetro de volumen
-  gain_pot_channel: 1           # Canal ADC para potenciómetro de ganancia
-  squelch_pot_channel: 2        # Canal ADC para potenciómetro de squelch
-  record_button_pin: 22         # Pin GPIO para botón de grabación
-  record_led_pin: 23            # Pin GPIO para LED indicador de grabación
-  default_frequency: 125000000  # Frecuencia inicial en Hz
-
-# Configuración de ADS-B
+# ========================================
+# CONFIGURACIÓN DE ADS-B
+# ========================================
 adsb:
   threshold: 0.5                # Umbral de detección
   aircraft_timeout: 60          # Timeout en segundos para considerar avión inactivo
 
+# ========================================
+# CONFIGURACIÓN DE VOX (Voice-Activated Recording)
+# ========================================
+vox:
+  threshold: -60                # Umbral RSSI en dB para activar grabación
+  delay: 2.0                    # Segundos de delay después de perder señal antes de detener
+
+# ========================================
+# MEMORIAS Y FRECUENCIAS PREDEFINIDAS
+# ========================================
 # Frecuencias comunes de aviación (MHz)
 airband_presets:
   - name: "Tower 1"

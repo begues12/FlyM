@@ -33,7 +33,7 @@ class DisplayController:
     DISPLAY_WIDTH = 128
     DISPLAY_HEIGHT = 32
     DEFAULT_VIEW_TIMEOUT = 3
-    VALID_VIEWS = {'main', 'volume', 'gain', 'squelch', 'adsb'}
+    VALID_VIEWS = {'main', 'volume', 'gain', 'squelch', 'adsb', 'memory', 'vox', 'autoscan'}
     SPLASH_DURATION = 2
     
     def __init__(self, config):
@@ -77,14 +77,14 @@ class DisplayController:
                 canvas = mock_canvas  # Usar el canvas mock
                 device = get_mock_device(width=128, height=32)
                 self.display = MockOLED(device=device)
-                logger.info("🎭 Usando MockOLED (modo simulación)")
+                print("🎭 Usando MockOLED (modo simulación)")
             else:
                 # Modo real
                 try:
-                    logger.info(f"🖥️  Inicializando Display real (I²C: 0x{self.display_addr:02X})...")
+                    print(f"🖥️  Inicializando Display real (I²C: 0x{self.display_addr:02X})...")
                     serial = i2c(port=self.i2c_port, address=self.display_addr)
                     self.display = ssd1306(serial, width=128, height=32)
-                    logger.info("✅ Display real inicializado")
+                    print("✅ Display real inicializado")
                 except Exception as e:
                     logger.error(f"❌ Error al inicializar display: {e}")
                     # Fallback a mock
@@ -118,7 +118,7 @@ class DisplayController:
                     'medium': None,
                     'large': None
                 }
-            logger.info("📝 Usando fuentes por defecto (modo simulación)")
+            print("📝 Usando fuentes por defecto (modo simulación)")
             return
         
         try:
@@ -128,7 +128,7 @@ class DisplayController:
                 'medium': ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 12),
                 'large': ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 16)
             }
-            logger.info("📝 Fuentes personalizadas cargadas")
+            print("📝 Fuentes personalizadas cargadas")
         except Exception as e:
             logger.warning(f"⚠️  No se pudieron cargar fuentes personalizadas: {e}")
             # Usar fuente por defecto
@@ -148,11 +148,11 @@ class DisplayController:
     def _show_splash(self):
         """Mostrar pantalla de inicio"""
         try:
-            logger.info("🎉 Mostrando splash screen...")
+            print("🎉 Mostrando splash screen...")
             with canvas(self.display) as draw:
                 draw.text((15, 0), "FlyM System", fill="white", font=self.fonts.get('large'))
                 draw.text((10, 18), "Aviation RX", fill="white", font=self.fonts.get('medium'))
-            logger.info("✅ Splash screen mostrado")
+            print("✅ Splash screen mostrado")
             time.sleep(2)
         except Exception as e:
             logger.error(f"❌ Error mostrando splash: {e}")
@@ -161,28 +161,53 @@ class DisplayController:
     
     def update_display(self, data: Dict[str, Any]):
         """
-        Actualizar pantalla con vista dinámica
+        Actualizar pantalla con vista dinámica basada en menú activo
         
         Args:
             data: Dict con todos los datos del sistema
         """
         with self.lock:
             try:
-                # Verificar timeout para volver a vista principal
-                self._check_view_timeout()
+                # Obtener menú activo del data
+                current_menu = data.get('current_menu', 'frequency')
+                submenu_open = data.get('submenu_open', False)
+        
                 
-                # Mapa de vistas a métodos
-                view_handlers = {
-                    'volume': self._draw_volume_view,
-                    'gain': self._draw_gain_view,
-                    'squelch': self._draw_squelch_view,
-                    'adsb': self._draw_adsb_view,
-                    'main': self._draw_main_view
-                }
-                
-                # Renderizar vista (default a main)
-                handler = view_handlers.get(self.current_view, self._draw_main_view)
-                handler(data)
+                # Mapear menú a vista
+                # Si el submenú está abierto, mostrar vista de submenú
+                if submenu_open:
+                    self._draw_submenu_view(data)
+                else:
+                    menu_to_view = {
+                        'frequency': 'main',
+                        'autoscan': 'autoscan',
+                        'gain': 'gain',
+                        'volume': 'volume',
+                        'memory': 'memory',
+                        'vox': 'vox'
+                    }
+                    
+                    self.current_view = menu_to_view.get(current_menu, 'main')
+                    
+                    # Si hay datos de ADS-B, priorizar esa vista
+                    if data.get('aircraft_data') and len(data['aircraft_data']) > 0:
+                        if current_menu == 'frequency':  # Solo en vista principal
+                            self.current_view = 'adsb'
+                    
+                    # Mapa de vistas a métodos
+                    view_handlers = {
+                        'volume': self._draw_volume_view,
+                        'gain': self._draw_gain_view,
+                        'autoscan': self._draw_autoscan_view,
+                        'adsb': self._draw_adsb_view,
+                        'memory': self._draw_memory_view,
+                        'vox': self._draw_vox_view,
+                        'main': self._draw_main_view
+                    }
+                    
+                    # Renderizar vista (default a main)
+                    handler = view_handlers.get(self.current_view, self._draw_main_view)
+                    handler(data)
                 
                 self.last_update = time.time()
                 
@@ -215,19 +240,26 @@ class DisplayController:
         """Vista principal: Frecuencia y RSSI"""
         try:
             with canvas(self.display) as draw:
+                # Indicador de menú
+                
                 # Línea 1: Frecuencia
                 freq_mhz = data.get('frequency', 0) / 1e6
                 freq_text = f"{freq_mhz:.3f}"
-                draw.text((0, 0), freq_text, fill="white", font=self.fonts['large'])
-                draw.text((90, 2), "MHz", fill="white", font=self.fonts['small'])
+                draw.text((5, 2), freq_text, fill="white", font=self.fonts['large'])
+                draw.text((45, 2), "MHz", fill="white", font=self.fonts['small'])
                 
-                # Línea 2: Modo y RSSI
+                # Indicador de grabación (esquina superior derecha)
+                if data.get('recording', False) or data.get('vox_recording', False):
+                    draw.ellipse((115, 0, 127, 12), fill="white")
+                    draw.text((119, 1), "R", fill="black", font=self.fonts['small'])
+                
+                # Línea 2: Modo y señal
                 mode_text = data.get('mode', 'VHF').replace('_', ' ')
-                draw.text((0, 18), mode_text, fill="white", font=self.fonts['small'])
+                draw.text((5, 18), mode_text, fill="white", font=self.fonts['small'])
                 
                 # Barra de señal
                 rssi = data.get('rssi', 0)
-                self._draw_signal_bars(draw, 70, 18, rssi)
+                self._draw_signal_bars(draw, 65, 18, rssi)
             logger.debug(f"📺 Main view dibujada: {freq_text} MHz")
         except Exception as e:
             logger.error(f"Error dibujando main view: {e}")
@@ -237,8 +269,8 @@ class DisplayController:
         with canvas(self.display) as draw:
             vol = data.get('volume', 0)
             
-            # Título
-            draw.text((30, 0), "VOLUMEN", fill="white", font=self.fonts['medium'])
+            # Indicador + Título
+            draw.text((0, 0), ">VOL", fill="white", font=self.fonts['medium'])
             
             # Valor numérico grande
             draw.text((45, 14), f"{vol}%", fill="white", font=self.fonts['large'])
@@ -253,11 +285,11 @@ class DisplayController:
         with canvas(self.display) as draw:
             gain = data.get('gain', 0)
             
-            # Título
-            draw.text((25, 0), "GANANCIA", fill="white", font=self.fonts['medium'])
+            # Indicador + Título
+            draw.text((0, 0), ">GAIN", fill="white", font=self.fonts['medium'])
             
             # Valor numérico
-            draw.text((40, 14), f"{gain} dB", fill="white", font=self.fonts['large'])
+            draw.text((40, 14), f"{gain}dB", fill="white", font=self.fonts['large'])
             
             # Barra horizontal
             bar_width = int((gain / 50) * 110)
@@ -269,8 +301,8 @@ class DisplayController:
         with canvas(self.display) as draw:
             squelch = data.get('squelch', 0)
             
-            # Título
-            draw.text((28, 0), "SQUELCH", fill="white", font=self.fonts['medium'])
+            # Indicador + Título
+            draw.text((0, 0), ">SQ", fill="white", font=self.fonts['medium'])
             
             # Valor numérico grande
             draw.text((45, 14), f"{squelch}%", fill="white", font=self.fonts['large'])
@@ -279,6 +311,37 @@ class DisplayController:
             bar_width = int((squelch / 100) * 110)
             draw.rectangle((8, 28, 8 + bar_width, 31), fill="white")
             draw.rectangle((8, 28, 118, 31), outline="white")
+    
+    def _draw_autoscan_view(self, data):
+        """Vista de auto-scan"""
+        with canvas(self.display) as draw:
+            autoscan = data.get('autoscan', 0)
+            
+            # Indicador + Título
+            draw.text((0, 0), ">SCAN", fill="white", font=self.fonts['medium'])
+            
+            # Estado ON/OFF grande
+            status = "ON" if autoscan == 1 else "OFF"
+            x_pos = 35 if status == "ON" else 30
+            draw.text((x_pos, 14), status, fill="white", font=self.fonts['large'])
+            
+            # Icono indicador
+            if autoscan == 1:
+                # Dibujar animación de scanning (círculos concéntricos)
+                import time
+                phase = int(time.time() * 2) % 3  # 0, 1, 2
+                center_x, center_y = 100, 20
+                for i in range(3):
+                    if i == phase:
+                        radius = 3 + i * 2
+                        draw.ellipse((center_x - radius, center_y - radius,
+                                    center_x + radius, center_y + radius),
+                                   outline="white")
+    
+    def _draw_squelch_view(self, data):
+        """DEPRECATED - Vista de squelch ya no se usa"""
+        # Redirigir a vista principal
+        self._draw_main_view(data)
     
     def _draw_adsb_view(self, data):
         """Vista de datos ADS-B"""
@@ -319,6 +382,129 @@ class DisplayController:
             else:
                 draw.rectangle((bar_x, bar_y, bar_x + bar_width, bar_y + bar_height), outline="white")
     
+    def _draw_memory_view(self, data):
+        """Dibujar vista de memorias"""
+        with canvas(self.display) as draw:
+            # Verificar si se acaba de guardar (mostrar confirmación)
+            if data.get('memory_saved', False):
+                # Pantalla de confirmación
+                draw.text((0, 0), "SAVED!", fill="white", font=self.fonts['large'])
+                memory_slot = data.get('memory', 1)
+                draw.text((0, 18), f"Memory M{int(memory_slot)}", fill="white", font=self.fonts['small'])
+                return
+            
+            # Vista normal de memoria
+            # Título
+            draw.text((0, 0), "MEMORY", fill="white", font=self.fonts['small'])
+            
+            # Slot actual
+            memory_slot = data.get('memory', 1)
+            draw.text((70, 0), f"M{int(memory_slot)}", fill="white", font=self.fonts['small'])
+            
+            # Instrucción en esquina
+            draw.text((95, 0), "[HOLD]", fill="white", font=self.fonts['small'])
+            
+            # Frecuencia guardada en memoria (si existe)
+            memory_freq = data.get('memory_freq')
+            memory_name = data.get('memory_name', '')
+            
+            if memory_freq:
+                freq_mhz = memory_freq / 1e6
+                draw.text((0, 12), f"{freq_mhz:.3f} MHz", fill="white", font=self.fonts['medium'])
+                
+                # Nombre de la memoria
+                if memory_name:
+                    draw.text((0, 24), memory_name[:16], fill="white", font=self.fonts['small'])
+            else:
+                draw.text((0, 16), "EMPTY", fill="white", font=self.fonts['large'])
+                draw.text((0, 24), "Hold MENU to save", fill="white", font=self.fonts['small'])
+    
+    def _draw_vox_view(self, data):
+        """Dibujar vista de VOX"""
+        with canvas(self.display) as draw:
+            # Título y estado en línea superior
+            vox_enabled = data.get('vox', 0) == 1
+            status_text = "ON" if vox_enabled else "OFF"
+            draw.text((0, 0), f"VOX: {status_text}", fill="white", font=self.fonts['small'])
+            
+            if vox_enabled:
+                # Estado de grabación en esquina superior derecha
+                vox_recording = data.get('vox_recording', False)
+                if vox_recording:
+                    draw.ellipse((110, 2, 126, 10), fill="white")
+                    draw.text((113, 1), "REC", fill="black", font=self.fonts['small'])
+                
+                # Umbral y RSSI en línea inferior
+                vox_threshold = data.get('vox_threshold', -60)
+                rssi = data.get('rssi', -100)
+                draw.text((0, 16), f"Th:{vox_threshold:+.0f}", fill="white", font=self.fonts['small'])
+                draw.text((60, 16), f"RS:{rssi:+.0f}", fill="white", font=self.fonts['small'])
+            else:
+                draw.text((0, 16), "OFF", fill="white", font=self.fonts['large'])
+    
+    def _draw_submenu_view(self, data):
+        """Vista de submenú con opciones: SAVE, MODE, REC, VOX"""
+        try:
+            
+            with canvas(self.display) as draw:
+                selected = data.get('submenu_option', 0)
+                
+                # Opciones del submenú
+                memory_slot = data.get('memory', 1)
+                if memory_slot == 0:
+                    save_text = "-"
+                else:
+                    save_text = f"M{memory_slot}"
+                
+                # MODE: extraer solo VHF o AM
+                mode = data.get('mode', 'VHF_AM')
+                if mode == 'VHF_AM':
+                    mode_text = "VHF"
+                else:
+                    mode_text = "AM"
+                
+                rec_text = "ON" if data.get('recording', False) else "OFF"
+                eq_text = "ON" if data.get('eq_auto', 0) == 1 else "OFF"
+                
+                # Log solo cuando hay cambio de valor
+                current_values = (save_text, mode_text, rec_text, eq_text)
+                if not hasattr(self, '_last_submenu_values') or self._last_submenu_values != current_values:
+                    print(f"📺 Submenú actualizado: SAV:{save_text} MOD:{mode_text} REC:{rec_text} EQ:{eq_text}")
+                    self._last_submenu_values = current_values
+                
+                options = [
+                    ("SAV", save_text),  # Guardar en memoria (- o M1-M10)
+                    ("MOD", mode_text),  # VHF o AM
+                    ("REC", rec_text),   # Grabar
+                    ("EQ", eq_text)      # Ecualizador automático
+                ]
+                                
+                # Layout: 2x2 grid más compacto
+                positions = [
+                    (2, 2),    # SAVE top-left
+                    (66, 2),   # MODE top-right
+                    (2, 18),   # REC bottom-left
+                    (66, 18)   # EQ bottom-right
+                ]
+                
+                for i, ((label, value), (x, y)) in enumerate(zip(options, positions)):
+                    # Resaltar opción seleccionada
+                    if i == selected:
+                        # Fondo blanco, texto negro
+                        draw.rectangle((x-1, y-1, x+58, y+11), fill="white")
+                        text_color = "black"
+                    else:
+                        text_color = "white"
+                    
+                    # Dibujar label y valor en la misma línea
+                    text = f"{label}:{value}"
+                    draw.text((x, y), text, fill=text_color, font=self.fonts['small'])
+                    
+        except Exception as e:
+            logger.error(f"❌ Error dibujando submenú: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+    
     def clear(self):
         """Limpiar pantalla"""
         if self.display:
@@ -326,7 +512,7 @@ class DisplayController:
     
     def shutdown(self):
         """Apagar pantalla limpiamente"""
-        logger.info("🔌 Apagando display...")
+        print("🔌 Apagando display...")
         if self.display:
             self.display.clear()
             self.display.hide()

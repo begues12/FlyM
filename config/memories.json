@@ -1,0 +1,42 @@
+{
+  "1": {
+    "name": "125.000 MHz",
+    "frequency": 125000000,
+    "mode": "VHF_AM"
+  },
+  "2": {
+    "name": "Torre Barcelona",
+    "frequency": 118300000.0,
+    "mode": "VHF_AM"
+  },
+  "3": {
+    "name": "Torre Sevilla",
+    "frequency": 118050000.0,
+    "mode": "VHF_AM"
+  },
+  "4": {
+    "name": "Torre Valencia",
+    "frequency": 118500000.0,
+    "mode": "VHF_AM"
+  },
+  "5": {
+    "name": "Emergencia",
+    "frequency": 121500000.0,
+    "mode": "VHF_AM"
+  },
+  "6": {
+    "name": "ATIS Madrid",
+    "frequency": 127800000.0,
+    "mode": "VHF_AM"
+  },
+  "7": {
+    "name": "ADS-B",
+    "frequency": 1090000000.0,
+    "mode": "ADSB"
+  },
+  "8": {
+    "name": "Ground Madrid",
+    "frequency": 121700000.0,
+    "mode": "VHF_AM"
+  }
+}

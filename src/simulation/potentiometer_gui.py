@@ -49,7 +49,7 @@ class PotentiometerControlGUI:
         self._create_widgets()
         self._inject_values_into_mock()
         
-        logger.info("🎛️ GUI de potenciómetros inicializada")
+        print("🎛️ GUI de potenciómetros inicializada")
     
     def _create_widgets(self):
         """Crear widgets de la interfaz"""
@@ -220,7 +220,7 @@ class PotentiometerControlGUI:
         self.pot_values[1].set(614)  # Ganancia: 60%
         self.pot_values[2].set(205)  # Squelch: 20%
         
-        logger.info("🔄 Potenciómetros reseteados a valores por defecto")
+        print("🔄 Potenciómetros reseteados a valores por defecto")
     
     def _show_info(self):
         """Mostrar información de ayuda"""

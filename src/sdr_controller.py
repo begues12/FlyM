@@ -60,7 +60,7 @@ class SDRController:
             from simulation.mock_sdr import MockRtlSdr
             self.sdr = MockRtlSdr()
             self.sdr.open()  # ✅ Abrir el mock SDR
-            logger.info("🎭 Usando MockRtlSdr (modo simulación)")
+            print("🎭 Usando MockRtlSdr (modo simulación)")
         else:
             # Modo real
             if RtlSdr is None:
@@ -69,7 +69,7 @@ class SDRController:
             
             try:
                 self.sdr = RtlSdr()
-                logger.info("📡 RTL-SDR real inicializado")
+                print("📡 RTL-SDR real inicializado")
             except Exception as e:
                 logger.error(f"❌ Error al inicializar RTL-SDR: {e}")
                 raise
@@ -79,10 +79,10 @@ class SDRController:
         self.sdr.center_freq = self.center_freq
         self.sdr.gain = self.gain
         
-        logger.info(f"✅ SDR configurado:")
-        logger.info(f"   Sample Rate: {self.sample_rate/1e6:.3f} MHz")
-        logger.info(f"   Center Freq: {self.center_freq/1e6:.3f} MHz")
-        logger.info(f"   Gain: {self.gain} dB")
+        print(f"✅ SDR configurado:")
+        print(f"   Sample Rate: {self.sample_rate/1e6:.3f} MHz")
+        print(f"   Center Freq: {self.center_freq/1e6:.3f} MHz")
+        print(f"   Gain: {self.gain} dB")
     
     def _setup_filters(self):
         """Configurar filtros para procesamiento de señal"""
@@ -98,7 +98,7 @@ class SDRController:
             window='hamming'
         )
         
-        logger.info(f"📊 Filtro paso-bajo: {self.AVIATION_BANDWIDTH/1000} kHz")
+        print(f"📊 Filtro paso-bajo: {self.AVIATION_BANDWIDTH/1000} kHz")
     
     def read_samples(self, num_samples=None):
         """
@@ -222,7 +222,7 @@ class SDRController:
         try:
             self.sdr.center_freq = freq
             self.center_freq = freq
-            logger.info(f"📻 Frecuencia ajustada a {freq/1e6:.3f} MHz")
+            print(f"📻 Frecuencia ajustada a {freq/1e6:.3f} MHz")
         except Exception as e:
             logger.error(f"Error al cambiar frecuencia: {e}")
     
@@ -254,10 +254,10 @@ class SDRController:
         try:
             if enabled:
                 self.sdr.gain = 'auto'
-                logger.info("🔄 AGC automático activado")
+                print("🔄 AGC automático activado")
             else:
                 self.sdr.gain = self.gain
-                logger.info("🔧 Ganancia manual activada")
+                print("🔧 Ganancia manual activada")
         except Exception as e:
             logger.error(f"Error al configurar AGC: {e}")
     
@@ -294,14 +294,14 @@ class SDRController:
     def tune_to_adsb(self):
         """Sintonizar a frecuencia ADS-B (1090 MHz)"""
         self.set_frequency(1090e6)
-        logger.info("✈️  Sintonizado a ADS-B (1090 MHz)")
+        print("✈️  Sintonizado a ADS-B (1090 MHz)")
     
     def close(self):
         """Cerrar y limpiar el dispositivo SDR"""
         if self.sdr:
             try:
                 self.sdr.close()
-                logger.info("✅ RTL-SDR cerrado correctamente")
+                print("✅ RTL-SDR cerrado correctamente")
             except Exception as e:
                 logger.error(f"Error al cerrar SDR: {e}")
 

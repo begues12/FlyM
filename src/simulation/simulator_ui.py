@@ -35,7 +35,7 @@ class SimulatorUI:
         self.running = True
         self.thread = threading.Thread(target=self._ui_loop, daemon=True)
         self.thread.start()
-        logger.info("🎮 Simulador UI iniciado")
+        print("🎮 Simulador UI iniciado")
         self._print_help()
     
     def stop(self):
@@ -43,7 +43,7 @@ class SimulatorUI:
         self.running = False
         if self.thread:
             self.thread.join(timeout=1)
-        logger.info("🎮 Simulador UI detenido")
+        print("🎮 Simulador UI detenido")
     
     def _ui_loop(self):
         """Loop principal de la UI"""

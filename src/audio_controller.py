@@ -72,7 +72,7 @@ class AudioController:
         if not self.simulation_mode:
             self._initialize_audio()
         else:
-            logger.info("🎵 AudioController en modo simulación (sin sounddevice)")
+            print("🎵 AudioController en modo simulación (sin sounddevice)")
     
     def _initialize_audio(self):
         """Inicializar sistema de audio"""
@@ -83,9 +83,9 @@ class AudioController:
         try:
             # Listar dispositivos disponibles
             devices = sd.query_devices()
-            logger.info(f"🔊 Dispositivos de audio disponibles:")
+            print(f"🔊 Dispositivos de audio disponibles:")
             for i, dev in enumerate(devices):
-                logger.info(f"   [{i}] {dev['name']}")
+                print(f"   [{i}] {dev['name']}")
             
             # Seleccionar dispositivo
             device_id = self._select_device()
@@ -100,10 +100,10 @@ class AudioController:
                 blocksize=self.buffer_size
             )
             
-            logger.info(f"✅ Audio inicializado:")
-            logger.info(f"   Sample Rate: {self.sample_rate} Hz")
-            logger.info(f"   Channels: {self.channels}")
-            logger.info(f"   Device: {device_id}")
+            print(f"✅ Audio inicializado:")
+            print(f"   Sample Rate: {self.sample_rate} Hz")
+            print(f"   Channels: {self.channels}")
+            print(f"   Device: {device_id}")
             
         except Exception as e:
             logger.error(f"❌ Error al inicializar audio: {e}")
@@ -121,14 +121,14 @@ class AudioController:
             devices = sd.query_devices()
             for i, dev in enumerate(devices):
                 if self.device_name.lower() in dev['name'].lower():
-                    logger.info(f"📻 Dispositivo seleccionado: {dev['name']}")
+                    print(f"📻 Dispositivo seleccionado: {dev['name']}")
                     return i
             
             logger.warning(f"⚠️  Dispositivo '{self.device_name}' no encontrado, usando default")
         
         # Usar dispositivo por defecto
         default_device = sd.query_devices(kind='output')
-        logger.info(f"📻 Usando dispositivo default: {default_device['name']}")
+        print(f"📻 Usando dispositivo default: {default_device['name']}")
         return None
     
     def _audio_callback(self, outdata, frames, time_info, status):
@@ -213,14 +213,22 @@ class AudioController:
     
     def set_volume(self, volume_percent: int):
         """
-        Ajustar volumen
+        Ajustar volumen con escala logarítmica
         
         Args:
             volume_percent: Volumen en porcentaje (0-100)
         """
         volume_percent = np.clip(volume_percent, self.MIN_VOLUME, self.MAX_VOLUME)
-        self.volume = volume_percent / 100.0
-        logger.debug(f"🔊 Volumen: {volume_percent}% ({self.volume:.2f})")
+        
+        # Convertir a escala logarítmica (más natural para el oído humano)
+        # Usa curva cuadrática: (x/100)^2
+        if volume_percent == 0:
+            self.volume = 0.0
+        else:
+            linear_volume = volume_percent / 100.0
+            self.volume = linear_volume ** 2  # Escala logarítmica
+        
+        logger.debug(f"🔊 Volumen: {volume_percent}% (lineal: {self.volume:.3f})")
     
     def get_volume(self):
         """
@@ -234,12 +242,12 @@ class AudioController:
     def mute(self):
         """Silenciar audio"""
         self.muted = True
-        logger.info("🔇 Audio silenciado")
+        print("🔇 Audio silenciado")
     
     def unmute(self):
         """Activar audio"""
         self.muted = False
-        logger.info("🔊 Audio activado")
+        print("🔊 Audio activado")
     
     def toggle_mute(self):
         """Alternar mute"""
@@ -261,7 +269,7 @@ class AudioController:
             self.squelch_threshold = threshold
         
         status = "activado" if enabled else "desactivado"
-        logger.info(f"🔇 Squelch {status} (umbral: {self.squelch_threshold:.3f})")
+        print(f"🔇 Squelch {status} (umbral: {self.squelch_threshold:.3f})")
     
     def set_squelch_threshold(self, threshold_percent: int):
         """
@@ -303,7 +311,7 @@ class AudioController:
                 f'flym_recording_{timestamp}.{self.recording_format}'
             )
             
-            logger.info(f"🔴 Grabación iniciada: {self.current_recording_file}")
+            print(f"🔴 Grabación iniciada: {self.current_recording_file}")
     
     def stop_recording(self):
         """Detener grabación y guardar archivo"""
@@ -312,7 +320,7 @@ class AudioController:
             
             if len(self.recording_buffer) > 0:
                 self._save_recording()
-                logger.info(f"⏹️  Grabación guardada: {self.current_recording_file}")
+                print(f"⏹️  Grabación guardada: {self.current_recording_file}")
             else:
                 logger.warning("⚠️  No hay datos para grabar")
             
@@ -340,7 +348,7 @@ class AudioController:
                 wf.setframerate(self.sample_rate)
                 wf.writeframes(audio_int16.tobytes())
             
-            logger.info(f"💾 Archivo guardado: {len(audio_data)} muestras")
+            print(f"💾 Archivo guardado: {len(audio_data)} muestras")
             
         except Exception as e:
             logger.error(f"Error al guardar grabación: {e}")
@@ -348,22 +356,22 @@ class AudioController:
     def start(self):
         """Iniciar stream de audio"""
         if self.simulation_mode:
-            logger.info("▶️  Stream de audio iniciado (simulación)")
+            print("▶️  Stream de audio iniciado (simulación)")
             return
         
         if self.stream and not self.stream.active:
             self.stream.start()
-            logger.info("▶️  Stream de audio iniciado")
+            print("▶️  Stream de audio iniciado")
     
     def stop(self):
         """Detener stream de audio"""
         if self.simulation_mode:
-            logger.info("⏹️  Stream de audio detenido (simulación)")
+            print("⏹️  Stream de audio detenido (simulación)")
             return
         
         if self.stream and self.stream.active:
             self.stream.stop()
-            logger.info("⏹️  Stream de audio detenido")
+            print("⏹️  Stream de audio detenido")
     
     def close(self):
         """Cerrar y limpiar recursos de audio"""
@@ -372,7 +380,7 @@ class AudioController:
             self.stop_recording()
         
         if self.simulation_mode:
-            logger.info("✅ Sistema de audio cerrado (simulación)")
+            print("✅ Sistema de audio cerrado (simulación)")
             return
         
         if self.stream:
@@ -380,7 +388,7 @@ class AudioController:
                 if self.stream.active:
                     self.stream.stop()
                 self.stream.close()
-                logger.info("✅ Sistema de audio cerrado correctamente")
+                print("✅ Sistema de audio cerrado correctamente")
             except Exception as e:
                 logger.error(f"Error al cerrar audio: {e}")
     

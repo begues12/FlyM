@@ -30,12 +30,12 @@ class MockRtlSdr:
         # Simulación de aviones (ADS-B)
         self.simulated_aircraft = []
         
-        logger.info("🎭 MockRtlSdr inicializado (modo simulación)")
+        print("🎭 MockRtlSdr inicializado (modo simulación)")
     
     def open(self):
         """Simula apertura del dispositivo"""
         self.is_open = True
-        logger.info("🎭 Mock SDR abierto")
+        print("🎭 Mock SDR abierto")
         return self
     
     def close(self):
@@ -43,7 +43,7 @@ class MockRtlSdr:
         if self.is_streaming:
             self.cancel_read_async()
         self.is_open = False
-        logger.info("🎭 Mock SDR cerrado")
+        print("🎭 Mock SDR cerrado")
     
     def set_center_freq(self, freq: int):
         """Establece frecuencia central"""
@@ -110,13 +110,13 @@ class MockRtlSdr:
     def add_simulated_aircraft(self, aircraft: dict):
         """Agregar un avión simulado a la lista"""
         self.simulated_aircraft.append(aircraft)
-        logger.info(f"✈️ Avión simulado agregado: {aircraft.get('callsign', 'UNKNOWN')}")
+        print(f"✈️ Avión simulado agregado: {aircraft.get('callsign', 'UNKNOWN')}")
     
     def clear_simulated_aircraft(self):
         """Limpiar lista de aviones simulados"""
         count = len(self.simulated_aircraft)
         self.simulated_aircraft.clear()
-        logger.info(f"🧹 {count} aviones simulados eliminados")
+        print(f"🧹 {count} aviones simulados eliminados")
     
     def get_simulated_aircraft(self) -> list:
         """Obtener lista de aviones simulados"""
@@ -130,13 +130,13 @@ class MockRtlSdr:
         self.is_streaming = True
         self._async_callback = callback
         self._async_num_samples = num_samples
-        logger.info(f"🎭 Streaming simulado iniciado ({num_samples} samples/bloque)")
+        print(f"🎭 Streaming simulado iniciado ({num_samples} samples/bloque)")
     
     def cancel_read_async(self):
         """Cancela lectura asíncrona"""
         self.is_streaming = False
         self._async_callback = None
-        logger.info("🎭 Streaming simulado detenido")
+        print("🎭 Streaming simulado detenido")
     
     def __enter__(self):
         """Context manager"""
