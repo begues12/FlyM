@@ -75,8 +75,14 @@ class FlyMSystem:
             'memory_name': '',  # Nombre de la memoria
             'vox_threshold': -60,  # Umbral VOX en dB
             'submenu_open': False,  # Submenú abierto
-            'submenu_option': 0,  # Opción seleccionada en submenú (0-3)
-            'eq_auto': 0  # Ecualizador automático 0=OFF, 1=ON
+            'submenu_option': 0,  # Opción seleccionada en submenú (0-2)
+            'eq_auto': 0,  # Ecualizador automático 0=OFF, 1=ON
+            # Variables de auto-scan
+            'scan_frequency': None,  # Frecuencia actual siendo escaneada
+            'scan_best_freq': None,  # Mejor frecuencia encontrada
+            'scan_best_rssi': -100,  # Mejor RSSI encontrado
+            # Variables de ADS-B
+            'selected_aircraft_index': 0  # Índice del avión seleccionado en la lista
         }
         
         # Hilos de procesamiento
@@ -145,7 +151,24 @@ class FlyMSystem:
     def on_control_change(self, control_type, value):
         """Callback para cambios en controles físicos y botones"""
         
-        # Manejar toggle de submenú (HOLD en botón MENU)
+        # Manejar recall de memoria (HOLD Menu en pantalla memory)
+        if control_type == 'memory_recall':
+            self._recall_and_tune_memory()
+            return
+        
+        # Manejar toggle de auto-scan (HOLD en botón MENU en cualquier pantalla excepto memory)
+        if control_type == 'autoscan_toggle':
+            current_state = self.state.get('autoscan', 0)
+            new_state = 1 if current_state == 0 else 0
+            self._toggle_autoscan(new_state)
+            self.state['autoscan'] = new_state
+            
+            # Sincronizar con GUI
+            if self.gui:
+                self.gui.update_state('autoscan', new_state)
+            return
+        
+        # Manejar toggle de submenú (DEPRECATED - ahora HOLD activa scan)
         if control_type == 'submenu_toggle':
             if self.state['submenu_open']:
                 self.state['submenu_open'] = False
@@ -159,6 +182,12 @@ class FlyMSystem:
                 self.gui.update_state('submenu_option', self.state['submenu_option'])
             return
         
+        # Manejar cambio de índice de avión (navegación con +/-)
+        if control_type == 'aircraft_index_change':
+            self.state['selected_aircraft_index'] = value
+            print(f"📺 Actualizando pantalla OLED con avión {value + 1}")
+            return
+        
         # Manejar cambio de valor en submenú (botones +/-)
         if control_type == 'submenu_change_value':
             if self.state.get('submenu_open', False):
@@ -167,11 +196,38 @@ class FlyMSystem:
             else:
                 return False
         
+        # Manejar navegación de aviones en modo ADS-B (botones +/-)
+        if control_type in ['volume', 'gain'] and self.state.get('mode') == 'ADSB':
+            aircraft_list = self.state.get('aircraft_data', [])
+            if aircraft_list:
+                current_idx = self.state.get('selected_aircraft_index', 0)
+                if control_type == 'volume':  # Botón + (reutilizando control_type)
+                    new_idx = (current_idx + 1) % len(aircraft_list)
+                else:  # Botón - 
+                    new_idx = (current_idx - 1) % len(aircraft_list)
+                
+                self.state['selected_aircraft_index'] = new_idx
+                
+                # Sincronizar con GUI
+                if self.gui:
+                    self.gui.update_state('selected_aircraft_index', new_idx)
+                    self.gui.update_state('aircraft_list', aircraft_list)
+                
+                # Mostrar información del avión
+                aircraft = aircraft_list[new_idx]
+                icao = aircraft.get('icao', 'UNKNOWN')
+                callsign = aircraft.get('callsign', '-')
+                alt = aircraft.get('altitude', 0)
+                spd = aircraft.get('speed', 0)
+                print(f"✈️  Avión {new_idx + 1}/{len(aircraft_list)}: {icao} {callsign} - {int(alt)}ft @ {int(spd)}kt")
+                return True
+                return True
+        
         # Manejar click en menú (depende si submenú está abierto)
         if control_type == 'menu_click':
             if self.state['submenu_open']:
-                # Click en submenú = NAVEGAR a siguiente opción
-                self.state['submenu_option'] = (self.state['submenu_option'] + 1) % 4
+                # Click en submenú = NAVEGAR a siguiente opción (3 opciones: SAVE, REC, EQ)
+                self.state['submenu_option'] = (self.state['submenu_option'] + 1) % 3
                 
                 # Sincronizar con GUI
                 if self.gui:
@@ -193,6 +249,37 @@ class FlyMSystem:
             print(f"📋 Menú cambiado a: {value}")
             return
         
+        # Manejar detección de avión simulado
+        if control_type == 'aircraft_detected':
+            if 'aircraft_data' not in self.state:
+                self.state['aircraft_data'] = []
+            
+            # Verificar si el avión ya existe (por ICAO)
+            icao = value.get('icao')
+            existing = False
+            for i, aircraft in enumerate(self.state['aircraft_data']):
+                if aircraft.get('icao') == icao:
+                    # Actualizar avión existente
+                    self.state['aircraft_data'][i] = value
+                    existing = True
+                    break
+            
+            # Si no existe, añadirlo (con límite de 15)
+            if not existing:
+                self.state['aircraft_data'].append(value)
+                # Limitar a 15 aviones máximo
+                if len(self.state['aircraft_data']) > 15:
+                    self.state['aircraft_data'] = self.state['aircraft_data'][-15:]
+                print(f"✈️ Avión detectado: {value.get('callsign', 'UNKNOWN')} | Total: {len(self.state['aircraft_data'])}/15")
+            
+            return
+        
+        # Manejar cambio de modo (VHF_AM o ADSB)
+        if control_type == 'mode':
+            self._change_mode(value)
+            self.state['mode'] = value
+            return
+        
         # Configuración de handlers para cada control
         control_actions = {
             'volume': {
@@ -206,10 +293,6 @@ class FlyMSystem:
             'frequency': {
                 'set': lambda: self.sdr.set_frequency(value),
                 'log': f"📻 Frecuencia ajustada a {value/1e6:.3f} MHz"
-            },
-            'autoscan': {
-                'set': lambda: self._toggle_autoscan(value),
-                'log': f"🔄 Auto-Scan {'activado' if value == 1 else 'desactivado'}"
             },
             'memory': {
                 'set': lambda: self._on_memory_change(value),
@@ -230,20 +313,8 @@ class FlyMSystem:
             'recording': {
                 'set': lambda: self._toggle_recording() if value != self.state.get('recording', False) else None,
                 'log': None
-            },
-            'mode': {
-                'set': lambda: self._change_mode(value),
-                'log': f"📡 Modo cambiado a {value}"
             }
         }
-        
-        # Manejar detección de avión simulado
-        if control_type == 'aircraft_detected':
-            if 'aircraft_data' not in self.state:
-                self.state['aircraft_data'] = []
-            self.state['aircraft_data'].append(value)
-            print(f"✈️ Avión detectado: {value.get('callsign', 'UNKNOWN')}")
-            return
         
         # Ejecutar acción si el control existe
         if control_type in control_actions:
@@ -282,10 +353,24 @@ class FlyMSystem:
         self.state['autoscan'] = value
         
         if value == 1:
-            print("🔄 Auto-Scan ACTIVADO - buscando señales...")
-            # TODO: Implementar lógica de auto-scan en sdr_processing_loop
+            # Inicializar variables de escaneo
+            self.state['scan_frequency'] = 108.0e6  # Inicio de banda de aviación
+            self.state['scan_best_freq'] = None
+            self.state['scan_best_rssi'] = -100
+            print("🔄 Auto-Scan ACTIVADO - escaneando 108-137 MHz...")
         else:
-            print("⏸️  Auto-Scan DESACTIVADO")
+            # Restaurar frecuencia guardada si había una buena señal
+            if self.state.get('scan_best_freq'):
+                self.state['frequency'] = self.state['scan_best_freq']
+                self.sdr.set_frequency(self.state['scan_best_freq'])
+                print(f"⏸️  Auto-Scan DESACTIVADO - sintonizado en {self.state['scan_best_freq']/1e6:.3f} MHz")
+            else:
+                print("⏸️  Auto-Scan DESACTIVADO")
+            
+            # Limpiar variables de escaneo
+            self.state['scan_frequency'] = None
+            self.state['scan_best_freq'] = None
+            self.state['scan_best_rssi'] = -100
     
     def _toggle_recording(self):
         """Alternar grabación de audio"""
@@ -300,7 +385,17 @@ class FlyMSystem:
             print("🔴 Grabación iniciada")
     
     def _change_submenu_value(self, direction):
-        """Cambiar valor de la opción seleccionada en el submenú"""
+        """Cambiar valor de la opción seleccionada en el submenú
+        
+        Submenú con 3 opciones:
+        0 = SAVE (slot de memoria 0-10)
+        1 = REC (grabación ON/OFF)
+        2 = EQ (ecualizador automático ON/OFF)
+        
+        Nota: Aviación usa exclusivamente AM (no FM) porque permite que dos transmisiones
+        simultáneas se escuchen mezcladas. En FM, una señal "captura" a la otra y se
+        perdería información crítica. Es preferible oír interferencia antes que no oír nada.
+        """
         option = self.state['submenu_option']
         
         if option == 0:  # SAVE - Cambiar slot de memoria
@@ -320,23 +415,14 @@ class FlyMSystem:
             if self.gui:
                 self.gui.update_state('memory', new_slot)
                 
-        elif option == 1:  # MODE - Toggle VHF ↔ AM
-            current_mode = self.state.get('mode', 'VHF_AM')
-            new_mode = 'AM' if current_mode == 'VHF_AM' else 'VHF_AM'
-            self.state['mode'] = new_mode
-            
-            # Sincronizar con GUI
-            if self.gui:
-                self.gui.update_state('mode', new_mode)
-                
-        elif option == 2:  # REC - Toggle grabación
+        elif option == 1:  # REC - Toggle grabación
             self._toggle_recording()
             
             # Sincronizar con GUI
             if self.gui:
                 self.gui.update_state('recording', self.state['recording'])
             
-        elif option == 3:  # EQ - Toggle ecualizador automático
+        elif option == 2:  # EQ - Toggle ecualizador automático
             current_eq = self.state.get('eq_auto', 0)
             new_eq = 1 if current_eq == 0 else 0
             self.state['eq_auto'] = new_eq
@@ -425,15 +511,29 @@ class FlyMSystem:
             self.state['memory_freq'] = memory['frequency']
             self.state['memory_name'] = memory['name']
             print(f"💾 Memoria M{slot}: {memory['name']} - {memory['frequency']/1e6:.3f} MHz")
-            
-            # Si estamos en el menú de memoria, podríamos auto-sintonizar
-            # (descomentado si quieres auto-tune al cambiar memoria)
-            # self.sdr.set_frequency(memory['frequency'])
-            # self.state['frequency'] = memory['frequency']
         else:
             self.state['memory_freq'] = None
             self.state['memory_name'] = ''
             print(f"💾 Memoria M{slot}: VACÍA")
+    
+    def _recall_and_tune_memory(self):
+        """Cargar y sintonizar la frecuencia guardada en el slot de memoria actual"""
+        slot = self.state['memory']
+        memory = self.memory_manager.recall_memory(int(slot))
+        
+        if memory:
+            # Sintonizar la frecuencia guardada
+            freq = memory['frequency']
+            self.sdr.set_frequency(freq)
+            self.state['frequency'] = freq
+            
+            # Sincronizar con GUI
+            if self.gui:
+                self.gui.update_state('frequency', freq)
+            
+            print(f"📻 Cargada memoria M{slot}: {memory['name']} - {freq/1e6:.3f} MHz")
+        else:
+            print(f"⚠️  Memoria M{slot} está vacía, no se puede cargar")
     
     def _on_memory_save(self, slot):
         """Callback para guardar frecuencia actual en memoria (hold botón menu)"""
@@ -503,21 +603,91 @@ class FlyMSystem:
         """Loop de procesamiento de señal SDR"""
         print("🔄 Iniciando loop de procesamiento SDR...")
         
+        # Configuración de auto-scan
+        SCAN_STEP = 25000  # 25 kHz
+        SCAN_MIN_FREQ = 108.0e6  # 108 MHz
+        SCAN_MAX_FREQ = 137.0e6  # 137 MHz
+        SCAN_DWELL_TIME = 0.1  # Tiempo en cada frecuencia (segundos)
+        SCAN_THRESHOLD = -40  # Umbral RSSI para detener escaneo (dB)
+        
+        scan_start_time = time.time()
+        
         while not self.shutdown_event.is_set():
             try:
                 # Leer muestras del SDR
                 samples = self.sdr.read_samples()
                 
                 if self.state['mode'] == 'VHF_AM':
-                    # Demodular AM para audio de aviación
-                    audio_data = self.sdr.demodulate_am(samples)
-                    
-                    # Enviar audio al DAC
-                    self.audio.play_audio(audio_data)
-                    
                     # Actualizar nivel de señal
                     rssi = self.sdr.get_rssi(samples)
                     self.state['rssi'] = rssi
+                    
+                    # Lógica de AUTO-SCAN
+                    if self.state.get('autoscan', 0) == 1:
+                        current_time = time.time()
+                        
+                        # Verificar si es momento de cambiar de frecuencia
+                        if current_time - scan_start_time >= SCAN_DWELL_TIME:
+                            # Evaluar frecuencia actual
+                            if rssi > self.state['scan_best_rssi']:
+                                self.state['scan_best_rssi'] = rssi
+                                self.state['scan_best_freq'] = self.state['scan_frequency']
+                                print(f"📶 Mejor señal: {self.state['scan_best_freq']/1e6:.3f} MHz ({rssi:.1f} dB)")
+                            
+                            # Si encontramos señal fuerte, detenerse automáticamente
+                            if rssi >= SCAN_THRESHOLD:
+                                print(f"✅ Señal fuerte detectada en {self.state['scan_frequency']/1e6:.3f} MHz ({rssi:.1f} dB)")
+                                print("🔒 Auto-Scan detenido - sintonizado en frecuencia activa")
+                                self.state['frequency'] = self.state['scan_frequency']
+                                self.state['autoscan'] = 0  # Desactivar auto-scan
+                                
+                                # Limpiar variables de escaneo
+                                self.state['scan_frequency'] = None
+                                self.state['scan_best_freq'] = None
+                                self.state['scan_best_rssi'] = -100
+                                
+                                # Sincronizar con GUI
+                                if self.gui:
+                                    self.gui.update_state('autoscan', 0)
+                                    self.gui.update_state('frequency', self.state['frequency'])
+                                    self.gui.update_state('current_menu', 'frequency')  # Cambiar a pantalla principal
+                            else:
+                                # Avanzar a siguiente frecuencia
+                                self.state['scan_frequency'] += SCAN_STEP
+                                
+                                # Si llegamos al final, volver al inicio o detenerse
+                                if self.state['scan_frequency'] > SCAN_MAX_FREQ:
+                                    if self.state['scan_best_freq']:
+                                        # Ir a la mejor frecuencia encontrada
+                                        print(f"🏁 Escaneo completo. Mejor señal: {self.state['scan_best_freq']/1e6:.3f} MHz ({self.state['scan_best_rssi']:.1f} dB)")
+                                        self.state['frequency'] = self.state['scan_best_freq']
+                                        self.sdr.set_frequency(self.state['scan_best_freq'])
+                                        self.state['autoscan'] = 0
+                                        
+                                        # Limpiar variables de escaneo
+                                        self.state['scan_frequency'] = None
+                                        self.state['scan_best_freq'] = None
+                                        self.state['scan_best_rssi'] = -100
+                                        
+                                        # Sincronizar con GUI
+                                        if self.gui:
+                                            self.gui.update_state('autoscan', 0)
+                                            self.gui.update_state('frequency', self.state['frequency'])
+                                            self.gui.update_state('current_menu', 'frequency')  # Cambiar a pantalla principal
+                                    else:
+                                        # Reiniciar escaneo
+                                        self.state['scan_frequency'] = SCAN_MIN_FREQ
+                                        self.state['scan_best_rssi'] = -100
+                                
+                                # Sintonizar nueva frecuencia
+                                self.sdr.set_frequency(int(self.state['scan_frequency']))
+                            
+                            scan_start_time = current_time
+                    
+                    # Demodular AM para audio de aviación (solo si no estamos escaneando rápido)
+                    if self.state.get('autoscan', 0) == 0:
+                        audio_data = self.sdr.demodulate_am(samples)
+                        self.audio.play_audio(audio_data)
                     
                     # Actualizar VOX con RSSI actual
                     if self.state.get('vox', 0) == 1:
@@ -534,7 +704,12 @@ class FlyMSystem:
                     
                     if messages:
                         self.state['aircraft_data'] = self.adsb.get_aircraft_list()
-                        logger.debug(f"✈️  {len(messages)} mensajes ADS-B decodificados")
+                        
+                        # Sincronizar con GUI
+                        if self.gui:
+                            self.gui.update_state('aircraft_list', self.state['aircraft_data'])
+                        
+                        logger.debug(f"✈️ {len(messages)} mensajes ADS-B decodificados")
                 
             except Exception as e:
                 logger.error(f"Error en loop SDR: {e}")
@@ -567,7 +742,9 @@ class FlyMSystem:
                     'vox_threshold': self.state.get('vox_threshold', -60),
                     'submenu_open': self.state.get('submenu_open', False),
                     'submenu_option': self.state.get('submenu_option', 0),
-                    'eq_auto': self.state.get('eq_auto', 0)
+                    'eq_auto': self.state.get('eq_auto', 0),
+                    'scan_frequency': self.state.get('scan_frequency'),  # Frecuencia siendo escaneada
+                    'selected_aircraft_index': self.state.get('selected_aircraft_index', 0)  # Índice del avión seleccionado
                 }
                 
                 # Actualizar pantalla

@@ -52,6 +52,7 @@ menus:
   # Orden de navegación (se cicla con botón MENU)
   order:
     - frequency                 # Sintonización de frecuencia
+    - adsb                      # Vista de aviones ADS-B
     - autoscan                  # Escaneo automático
     - gain                      # Ganancia SDR
     - volume                    # Control de volumen
@@ -67,6 +68,10 @@ menus:
     default: 125.0              # Frecuencia por defecto en MHz
     format: "{:.3f} MHz"        # Formato de visualización
   
+  adsb:
+    name: "ADS-B"
+    format: "ADS-B"
+
   autoscan:
     name: "AUTO-SCAN"
     min: 0                      # 0=OFF

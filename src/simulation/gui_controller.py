@@ -40,11 +40,14 @@ class SimulatorGUI:
             'vox': 0,  # 0=OFF, 1=ON
             'submenu_open': False,  # Submenú abierto
             'submenu_option': 0,  # Opción seleccionada (0-3)
-            'eq_auto': 0  # Ecualizador automático 0=OFF, 1=ON
+            'eq_auto': 0,  # Ecualizador automático 0=OFF, 1=ON
+            'selected_aircraft_index': 0,  # Índice del avión seleccionado
+            'aircraft_list': [],  # Lista de aviones detectados
+            'adsb': 0  # Menú ADS-B (no tiene valor, solo vista)
         }
         
         # Menús disponibles
-        self.menus = ['frequency', 'autoscan', 'gain', 'volume', 'memory', 'vox']
+        self.menus = ['frequency', 'adsb', 'autoscan', 'gain', 'volume', 'memory', 'vox']
         self.menu_index = 0
         
         # Sistema de mantener presionado con aceleración exponencial
@@ -55,6 +58,9 @@ class SimulatorGUI:
         
         # Widgets
         self.widgets = {}
+        
+        # Control de actualización de aviones
+        self._aircraft_update_timer = None
     
     def start(self):
         """Inicia la interfaz gráfica en un thread separado"""
@@ -83,9 +89,9 @@ class SimulatorGUI:
         """Ejecuta el loop principal de la GUI"""
         try:
             self.root = tk.Tk()
-            self.root.title("🎭 FlyM Simulator Control Panel")
-            self.root.geometry("600x700")
-            self.root.resizable(False, False)
+            self.root.title("FlyM Control Panel")
+            self.root.geometry("600x550")
+            self.root.resizable(True, True)
             
             # Configurar estilo
             self._setup_style()
@@ -94,9 +100,6 @@ class SimulatorGUI:
             self._create_header()
             self._create_oled_display_section()
             self._create_controls_section()
-            self._create_aircraft_simulation_section()
-            self._create_mode_section()
-            self._create_status_section()
             self._create_buttons_section()
             
             # Actualizar periódicamente
@@ -148,7 +151,7 @@ class SimulatorGUI:
         frame.pack(pady=20)
         
         title = ttk.Label(frame, 
-                         text="🎭 FlyM Simulator Control",
+                         text="FlyM Control Panel",
                          style='Title.TLabel')
         title.pack()
         
@@ -190,16 +193,13 @@ class SimulatorGUI:
     
     def _create_controls_section(self):
         """Crea sección de botones de control"""
-        frame = ttk.LabelFrame(self.root, text="  🎛️ Controles (Botones)  ", padding=15)
+        frame = ttk.LabelFrame(self.root, text="  🎛️ Controles (Botones)  ")
         frame.pack(padx=20, pady=10, fill='x')
         
         # Indicador de menú activo
         menu_frame = ttk.Frame(frame)
         menu_frame.pack(fill='x', pady=(0, 15))
         
-    
-        
-        ttk.Separator(frame, orient='horizontal').pack(fill='x', pady=10)
         
         # Botones de control
         btn_frame = ttk.Frame(frame)
@@ -222,18 +222,6 @@ class SimulatorGUI:
         self.menu_press_time = None
         
         
-        # Botón + con eventos de mantener
-        plus_btn = tk.Button(btn_frame,
-                            text="➕ +",
-                            width=10,
-                            font=('Arial', 12),
-                            relief=tk.RAISED,
-                            borderwidth=2)
-        plus_btn.bind('<ButtonPress-1>', lambda e: self._on_button_press('+'))
-        plus_btn.bind('<ButtonRelease-1>', lambda e: self._on_button_release())
-        plus_btn.pack(side='left', padx=10)
-        self.widgets['plus_btn'] = plus_btn
-        
         # Botón - con eventos de mantener
         minus_btn = tk.Button(btn_frame,
                              text="➖ -",
@@ -245,6 +233,19 @@ class SimulatorGUI:
         minus_btn.bind('<ButtonRelease-1>', lambda e: self._on_button_release())
         minus_btn.pack(side='left', padx=10)
         self.widgets['minus_btn'] = minus_btn
+        
+                
+        # Botón + con eventos de mantener
+        plus_btn = tk.Button(btn_frame,
+                            text="➕ +",
+                            width=10,
+                            font=('Arial', 12),
+                            relief=tk.RAISED,
+                            borderwidth=2)
+        plus_btn.bind('<ButtonPress-1>', lambda e: self._on_button_press('+'))
+        plus_btn.bind('<ButtonRelease-1>', lambda e: self._on_button_release())
+        plus_btn.pack(side='left', padx=10)
+        self.widgets['plus_btn'] = plus_btn
         
         # Valores actuales (mostrar info en tabla de 2 columnas)
         ttk.Separator(frame, orient='horizontal').pack(fill='x', pady=10)
@@ -283,101 +284,8 @@ class SimulatorGUI:
                 self.widgets[key] = ttk.Label(row_frame, text=value, style='Value.TLabel', width=14)
                 self.widgets[key].pack(side='left')
 
+
     
-    def _create_aircraft_simulation_section(self):
-        """Crea sección de simulación de aviones"""
-        frame = ttk.LabelFrame(self.root, text="  ✈️ Simulación de Aviones (ADS-B)  ", padding=15)
-        frame.pack(padx=20, pady=10, fill='x')
-        
-        # Info
-        ttk.Label(frame,
-                 text="Simula la detección de aviones cercanos",
-                 style='Normal.TLabel').pack(pady=(0, 10))
-        
-        # Botones
-        btn_frame = ttk.Frame(frame)
-        btn_frame.pack()
-        
-        ttk.Button(btn_frame,
-                  text="➕ Simular Avión Comercial",
-                  command=lambda: self._simulate_aircraft('commercial'),
-                  width=25).pack(side='left', padx=5)
-        
-        ttk.Button(btn_frame,
-                  text="➕ Simular Avión Privado",
-                  command=lambda: self._simulate_aircraft('private'),
-                  width=25).pack(side='left', padx=5)
-        
-        # Botón limpiar
-        ttk.Button(frame,
-                  text="🧹 Limpiar Aviones",
-                  command=self._clear_aircraft,
-                  width=52).pack(pady=5)
-        
-        # Lista de aviones
-        self.widgets['aircraft_listbox'] = tk.Listbox(frame, height=4, font=('Courier', 9))
-        self.widgets['aircraft_listbox'].pack(fill='x', pady=5)
-        
-        # Estado
-        self.widgets['aircraft_status'] = ttk.Label(frame,
-                                                    text="📡 0 aviones detectados",
-                                                    style='Normal.TLabel')
-        self.widgets['aircraft_status'].pack()
-    
-    def _create_mode_section(self):
-        """Crea sección de modo"""
-        frame = ttk.LabelFrame(self.root, text="  Modo de Operación  ", padding=15)
-        frame.pack(padx=20, pady=10, fill='x')
-        
-        self.widgets['mode_var'] = tk.StringVar(value=self.state['mode'])
-        
-        modes = [
-            ("📻 VHF AM (Aviación)", "VHF_AM"),
-            ("✈️  ADS-B (1090 MHz)", "ADSB")
-        ]
-        
-        for label, mode in modes:
-            rb = ttk.Radiobutton(frame,
-                                text=label,
-                                variable=self.widgets['mode_var'],
-                                value=mode,
-                                command=self._on_mode_change)
-            rb.pack(anchor='w', pady=2)
-    
-    def _create_status_section(self):
-        """Crea sección de estado"""
-        frame = ttk.LabelFrame(self.root, text="  Estado del Sistema  ", padding=15)
-        frame.pack(padx=20, pady=10, fill='x')
-        
-        # RSSI
-        rssi_frame = ttk.Frame(frame)
-        rssi_frame.pack(fill='x', pady=2)
-        
-        ttk.Label(rssi_frame, text="📊 RSSI:", style='Normal.TLabel').pack(side='left')
-        self.widgets['rssi_label'] = ttk.Label(rssi_frame,
-                                                text="0 dB",
-                                                style='Value.TLabel')
-        self.widgets['rssi_label'].pack(side='right')
-        
-        # Auto-Scan Status
-        scan_frame = ttk.Frame(frame)
-        scan_frame.pack(fill='x', pady=2)
-        
-        ttk.Label(scan_frame, text="🔄 Auto-Scan:", style='Normal.TLabel').pack(side='left')
-        self.widgets['autoscan_status'] = ttk.Label(scan_frame,
-                                                    text="⚫ OFF",
-                                                    style='Value.TLabel')
-        self.widgets['autoscan_status'].pack(side='right')
-        
-        # Modo actual
-        mode_frame = ttk.Frame(frame)
-        mode_frame.pack(fill='x', pady=2)
-        
-        ttk.Label(mode_frame, text="📡 Modo:", style='Normal.TLabel').pack(side='left')
-        self.widgets['mode_status'] = ttk.Label(mode_frame,
-                                                 text=self.state['mode'],
-                                                 style='Value.TLabel')
-        self.widgets['mode_status'].pack(side='right')
     
     def _create_buttons_section(self):
         """Crea botones de acción"""
@@ -389,6 +297,12 @@ class SimulatorGUI:
                                command=self._reset_values,
                                width=20)
         btn_reset.pack(side='left', padx=5)
+        
+        btn_simulate = ttk.Button(frame,
+                                 text="✈️ Simular Aviones",
+                                 command=self._simulate_aircraft,
+                                 width=20)
+        btn_simulate.pack(side='left', padx=5)
         
         btn_help = ttk.Button(frame,
                              text="❓ Ayuda",
@@ -423,9 +337,14 @@ class SimulatorGUI:
             self._on_menu_click()
     
     def _on_menu_hold_detected(self):
-        """HOLD detectado en botón MENÚ - abrir submenú"""
+        """HOLD detectado en botón MENÚ - cargar memoria o toggle auto-scan"""
         if self.on_control_change:
-            self.on_control_change('submenu_toggle', None)
+            # Si estamos en el menú de memoria, cargar la frecuencia guardada
+            if self.state['current_menu'] == 'memory':
+                self.on_control_change('memory_recall', None)
+            else:
+                # En otros menús, toggle auto-scan
+                self.on_control_change('autoscan_toggle', None)
         
         self.menu_hold_timer = None
     
@@ -446,8 +365,9 @@ class SimulatorGUI:
         else:
             self._on_minus_button()
         
-        # En el submenú, NO iniciar timer de repetición automática
-        if not self.state.get('submenu_open', False):
+        # En el submenú o menú adsb, NO iniciar timer de repetición automática
+        menu = self.state.get('current_menu', 'frequency')
+        if not self.state.get('submenu_open', False) and menu not in ['adsb']:
             self._schedule_button_repeat()
     
     def _on_button_release(self):
@@ -497,12 +417,41 @@ class SimulatorGUI:
                 self.on_control_change('submenu_change_value', 1)
             return
         
+        # Si estamos en modo ADS-B, navegar por aviones
+        if self.state['mode'] == 'ADSB':
+            aircraft_list = self.state.get('aircraft_list', [])
+            if aircraft_list:
+                current_idx = self.state['selected_aircraft_index']
+                new_idx = (current_idx + 1) % len(aircraft_list)
+                self.state['selected_aircraft_index'] = new_idx
+                self._update_aircraft_display()
+            return
+        
         menu = self.state['current_menu']
+        
+        # Si estamos en menú ADS-B, navegar por aviones
+        if menu == 'adsb':
+            aircraft_list = self.state.get('aircraft_list', [])
+            if aircraft_list:
+                current_idx = self.state['selected_aircraft_index']
+                new_idx = (current_idx + 1) % len(aircraft_list)
+                self.state['selected_aircraft_index'] = new_idx
+                self._update_aircraft_display()
+                
+                # Notificar al sistema principal para actualizar OLED
+                if self.on_control_change:
+                    self.on_control_change('aircraft_index_change', new_idx)
+                
+                print(f"✈️  Avión siguiente: {new_idx + 1}/{len(aircraft_list)}")
+            return
+        
+        # Ignorar autoscan - se controlan de forma especial
+        if menu == 'autoscan':
+            return
         
         # Pasos e increments
         steps = {
             'frequency': 25000,  # 25 kHz en Hz
-            'autoscan': 1,  # Toggle ON/OFF
             'gain': 2,
             'volume': 1,  # Incrementos de 1
             'memory': 1,  # Cambiar slots
@@ -512,7 +461,6 @@ class SimulatorGUI:
         # Rangos
         ranges = {
             'frequency': (108.0e6, 137.0e6),
-            'autoscan': (0, 1),
             'gain': (0, 50),
             'volume': (0, 100),
             'memory': (1, 10),  # 10 slots
@@ -566,12 +514,42 @@ class SimulatorGUI:
                 self.on_control_change('submenu_change_value', -1)
             return
         
+        # Si estamos en modo ADS-B, navegar por aviones
+        if self.state['mode'] == 'ADSB':
+            aircraft_list = self.state.get('aircraft_list', [])
+            if aircraft_list:
+                current_idx = self.state['selected_aircraft_index']
+                new_idx = (current_idx - 1) % len(aircraft_list)
+                self.state['selected_aircraft_index'] = new_idx
+                self._update_aircraft_display()
+                print(f"✈️  Avión anterior: {new_idx + 1}/{len(aircraft_list)}")
+            return
+        
         menu = self.state['current_menu']
+        
+        # Si estamos en menú ADS-B, navegar por aviones
+        if menu == 'adsb':
+            aircraft_list = self.state.get('aircraft_list', [])
+            if aircraft_list:
+                current_idx = self.state['selected_aircraft_index']
+                new_idx = (current_idx - 1) % len(aircraft_list)
+                self.state['selected_aircraft_index'] = new_idx
+                self._update_aircraft_display()
+                
+                # Notificar al sistema principal para actualizar OLED
+                if self.on_control_change:
+                    self.on_control_change('aircraft_index_change', new_idx)
+                
+                print(f"✈️  Avión anterior: {new_idx + 1}/{len(aircraft_list)}")
+            return
+        
+        # Ignorar autoscan - se controlan de forma especial
+        if menu == 'autoscan':
+            return
         
         # Pasos
         steps = {
             'frequency': 25000,  # 25 kHz en Hz
-            'autoscan': 1,  # Toggle ON/OFF
             'gain': 2,
             'volume': 1,  # Incrementos de 1
             'memory': 1,
@@ -581,7 +559,6 @@ class SimulatorGUI:
         # Rangos
         ranges = {
             'frequency': (108.0e6, 137.0e6),
-            'autoscan': (0, 1),
             'gain': (0, 50),
             'volume': (0, 100),
             'memory': (1, 10),
@@ -653,7 +630,94 @@ class SimulatorGUI:
         """Actualizar estado desde el sistema principal"""
         if key in self.state:
             self.state[key] = value
+            
+            # Si se actualiza current_menu, actualizar el índice de menú
+            if key == 'current_menu':
+                try:
+                    self.menu_index = self.menus.index(value)
+                except ValueError:
+                    pass
+            
+            # Si se actualiza la lista de aviones, actualizar display
+            if key == 'aircraft_list':
+                self._update_aircraft_display()
+            
             self._update_all_value_labels()
+    
+    def _update_aircraft_display(self):
+        """Actualiza el display con información del avión seleccionado"""
+        # Verificar que los widgets existan
+        if 'aircraft_index_label' not in self.widgets:
+            return
+        
+        aircraft_list = self.state.get('aircraft_list', [])
+        
+        if not aircraft_list:
+            # No hay aviones
+            self.widgets['aircraft_index_label'].config(text="0 / 0")
+            self.widgets['aircraft_icao'].config(text="-")
+            self.widgets['aircraft_callsign'].config(text="-")
+            self.widgets['aircraft_altitude'].config(text="-")
+            self.widgets['aircraft_speed'].config(text="-")
+            self.widgets['aircraft_position'].config(text="-")
+            self.widgets['aircraft_last_seen'].config(text="-")
+            return
+        
+        # Asegurar que el índice sea válido
+        idx = self.state['selected_aircraft_index']
+        if idx >= len(aircraft_list):
+            idx = 0
+            self.state['selected_aircraft_index'] = 0
+        
+        aircraft = aircraft_list[idx]
+        
+        # Actualizar widgets
+        self.widgets['aircraft_index_label'].config(text=f"{idx + 1} / {len(aircraft_list)}")
+        self.widgets['aircraft_icao'].config(text=aircraft.get('icao', '-'))
+        self.widgets['aircraft_callsign'].config(text=aircraft.get('callsign', '-') or '-')
+        
+        # Altitud
+        altitude = aircraft.get('altitude')
+        if altitude is not None:
+            self.widgets['aircraft_altitude'].config(text=f"{int(altitude)} ft")
+        else:
+            self.widgets['aircraft_altitude'].config(text="-")
+        
+        # Velocidad
+        speed = aircraft.get('speed')
+        if speed is not None:
+            self.widgets['aircraft_speed'].config(text=f"{int(speed)} kt")
+        else:
+            self.widgets['aircraft_speed'].config(text="-")
+        
+        # Posición
+        lat = aircraft.get('lat')
+        lon = aircraft.get('lon')
+        if lat is not None and lon is not None:
+            self.widgets['aircraft_position'].config(text=f"{lat:.4f}°, {lon:.4f}°")
+        else:
+            self.widgets['aircraft_position'].config(text="-")
+        
+        # Última actualización
+        last_seen = aircraft.get('last_seen')
+        signal_lost = aircraft.get('signal_lost', False)
+        
+        if last_seen:
+            import time
+            elapsed = int(time.time() - last_seen)
+            
+            if signal_lost:
+                self.widgets['aircraft_last_seen'].config(
+                    text=f"⚠️ SIN SEÑAL ({elapsed}s)",
+                    foreground='#FF6B6B'  # Rojo para advertencia
+                )
+            else:
+                self.widgets['aircraft_last_seen'].config(
+                    text=f"Hace {elapsed}s",
+                    foreground='#4CAF50'  # Verde normal
+                )
+        else:
+            self.widgets['aircraft_last_seen'].config(text="-", foreground='#4CAF50')
     
     def _on_volume_change(self, value):
         """DEPRECATED - Ya no se usa slider de volumen"""
@@ -697,84 +761,197 @@ class SimulatorGUI:
         """Cambio de modo"""
         mode = self.widgets['mode_var'].get()
         self.state['mode'] = mode
-        self.widgets['mode_status'].config(text=mode)
         
         if self.on_control_change:
             self.on_control_change('mode', mode)
         
         print(f"✅ Modo: {mode}")
     
-    def _simulate_aircraft(self, aircraft_type: str):
-        """Simula la detección de un avión"""
+    def _simulate_aircraft(self):
+        """Simular aviones ADS-B para pruebas"""
         import random
         import time
         
-        if aircraft_type == 'commercial':
-            # Avión comercial
-            callsigns = ['IBE3142', 'RYR8472', 'VLG2834', 'AEA1029', 'UAL455']
+        # Datos realistas de aviones
+        airlines = [
+            ('AFR', 'Air France'),
+            ('BAW', 'British Airways'),
+            ('DLH', 'Lufthansa'),
+            ('UAL', 'United'),
+            ('AAL', 'American'),
+            ('IBE', 'Iberia'),
+            ('KLM', 'KLM'),
+            ('RYR', 'Ryanair')
+        ]
+        
+        # Generar 5-8 aviones aleatorios
+        num_aircraft = random.randint(5, 8)
+        aircraft_list = []
+        
+        for i in range(num_aircraft):
+            # ICAO aleatorio (6 caracteres hexadecimales)
+            icao = ''.join(random.choices('0123456789ABCDEF', k=6))
+            
+            # Callsign aleatorio
+            airline, airline_name = random.choice(airlines)
+            flight_num = random.randint(100, 999)
+            callsign = f"{airline}{flight_num}"
+            
+            # Datos de vuelo
+            altitude = random.randint(20000, 42000)  # Pies
+            speed = random.randint(350, 550)  # Nudos
+            lat = 40.0 + random.uniform(-2, 2)  # Cerca de Madrid
+            lon = -3.5 + random.uniform(-2, 2)
+            
             aircraft = {
-                'icao': f"{random.randint(100000, 999999):06X}",
-                'callsign': random.choice(callsigns),
-                'altitude': random.randint(25000, 40000),
-                'speed': random.randint(400, 550),
-                'heading': random.randint(0, 359),
-                'latitude': 40.0 + random.uniform(-0.5, 0.5),
-                'longitude': -3.5 + random.uniform(-0.5, 0.5),
-                'timestamp': time.time()
+                'icao': icao,
+                'callsign': callsign,
+                'altitude': altitude,
+                'speed': speed,
+                'lat': lat,
+                'lon': lon,
+                'last_seen': time.time()
             }
-        else:
-            # Avión privado
-            aircraft = {
-                'icao': f"{random.randint(100000, 999999):06X}",
-                'callsign': f"N{random.randint(100, 999)}AB",
-                'altitude': random.randint(5000, 15000),
-                'speed': random.randint(120, 250),
-                'heading': random.randint(0, 359),
-                'latitude': 40.0 + random.uniform(-0.5, 0.5),
-                'longitude': -3.5 + random.uniform(-0.5, 0.5),
-                'timestamp': time.time()
-            }
-        
-        # Agregar a la lista
-        if 'aircraft_data' not in self.state:
-            self.state['aircraft_data'] = []
-        
-        self.state['aircraft_data'].append(aircraft)
-        
-        # Actualizar UI
-        self._update_aircraft_list()
-        
-        # Notificar al sistema
-        if self.on_control_change:
-            self.on_control_change('aircraft_detected', aircraft)
-        
-        print(f"✈️ Avión simulado: {aircraft['callsign']} @ {aircraft['altitude']}ft")
-    
-    def _clear_aircraft(self):
-        """Limpiar lista de aviones"""
-        if 'aircraft_data' in self.state:
-            count = len(self.state['aircraft_data'])
-            self.state['aircraft_data'].clear()
-            self._update_aircraft_list()
-            print(f"🧹 {count} aviones eliminados")
-    
-    def _update_aircraft_list(self):
-        """Actualiza la lista de aviones en la UI"""
-        aircraft_list = self.state.get('aircraft_data', [])
-        
-        # Limpiar listbox
-        self.widgets['aircraft_listbox'].delete(0, tk.END)
-        
-        # Agregar aviones
-        for ac in aircraft_list:
-            line = f"{ac['callsign']:<10} ALT:{ac['altitude']:>6}ft SPD:{ac['speed']:>3}kt HDG:{ac['heading']:>3}°"
-            self.widgets['aircraft_listbox'].insert(tk.END, line)
+            
+            aircraft_list.append(aircraft)
         
         # Actualizar estado
-        count = len(aircraft_list)
-        self.widgets['aircraft_status'].config(
-            text=f"📡 {count} aviones detectados"
-        )
+        self.state['aircraft_list'] = aircraft_list
+        
+        # Notificar al sistema principal
+        if self.on_control_change:
+            for aircraft in aircraft_list:
+                self.on_control_change('aircraft_detected', aircraft)
+        
+        # Actualizar display
+        self._update_aircraft_display()
+        
+        # Iniciar actualización periódica
+        self._schedule_aircraft_updates()
+        
+        print(f"✈️ {num_aircraft} aviones simulados generados")
+        for ac in aircraft_list:
+            print(f"   {ac['icao']} - {ac['callsign']} - {ac['altitude']}ft @ {ac['speed']}kt")
+    
+    def _schedule_aircraft_updates(self):
+        """Programa actualizaciones periódicas de aviones"""
+        if self._aircraft_update_timer:
+            return  # Ya hay un timer activo
+        
+        self._update_aircraft_data()
+    
+    def _update_aircraft_data(self):
+        """Actualiza datos de aviones existentes y ocasionalmente agrega nuevos"""
+        import random
+        import time
+        
+        if not self.running or not self.root:
+            self._aircraft_update_timer = None
+            return
+        
+        aircraft_list = self.state.get('aircraft_list', [])
+        
+        if aircraft_list:
+            # Actualizar aviones existentes
+            current_time = time.time()
+            aircraft_to_remove = []
+            
+            for i, aircraft in enumerate(aircraft_list):
+                last_seen = aircraft.get('last_seen', current_time)
+                time_since_update = current_time - last_seen
+                
+                # Si lleva más de 2 minutos sin señal, marcar para eliminar
+                if time_since_update > 120:  # 2 minutos
+                    aircraft_to_remove.append(i)
+                    print(f"📡 ❌ Avión perdido: {aircraft.get('icao')} {aircraft.get('callsign')} - Sin señal desde hace {int(time_since_update)}s")
+                    continue
+                
+                # Marcar si está perdiendo señal (más de 30 segundos)
+                if time_since_update > 30:
+                    aircraft['signal_lost'] = True
+                else:
+                    aircraft['signal_lost'] = False
+                
+                # Cambiar altitud (+/- 500 ft)
+                alt_change = random.randint(-500, 500)
+                new_alt = max(10000, min(45000, aircraft['altitude'] + alt_change))
+                aircraft['altitude'] = new_alt
+                
+                # Cambiar velocidad (+/- 20 kt)
+                spd_change = random.randint(-20, 20)
+                new_spd = max(300, min(600, aircraft['speed'] + spd_change))
+                aircraft['speed'] = new_spd
+                
+                # Actualizar posición ligeramente
+                aircraft['lat'] += random.uniform(-0.01, 0.01)
+                aircraft['lon'] += random.uniform(-0.01, 0.01)
+                
+                # Actualizar timestamp
+                aircraft['last_seen'] = time.time()
+            
+            # Eliminar aviones perdidos (en orden inverso para no afectar índices)
+            for i in reversed(aircraft_to_remove):
+                removed = aircraft_list.pop(i)
+                print(f"🗑️  Avión eliminado de la lista: {removed.get('icao')} {removed.get('callsign')}")
+                
+                # Ajustar índice seleccionado si es necesario
+                if self.state['selected_aircraft_index'] >= len(aircraft_list) and aircraft_list:
+                    self.state['selected_aircraft_index'] = len(aircraft_list) - 1
+                elif not aircraft_list:
+                    self.state['selected_aircraft_index'] = 0
+            
+            # Actualizar estado primero
+            self.state['aircraft_list'] = aircraft_list
+            
+            # 30% de probabilidad de agregar un nuevo avión (aumentado para más actividad)
+            current_count = len(aircraft_list)
+            if random.random() < 0.3 and current_count < 15:
+                airlines = [
+                    ('AFR', 'Air France'),
+                    ('BAW', 'British Airways'),
+                    ('DLH', 'Lufthansa'),
+                    ('UAL', 'United'),
+                    ('AAL', 'American'),
+                    ('IBE', 'Iberia'),
+                    ('KLM', 'KLM'),
+                    ('RYR', 'Ryanair')
+                ]
+                
+                icao = ''.join(random.choices('0123456789ABCDEF', k=6))
+                airline, _ = random.choice(airlines)
+                flight_num = random.randint(100, 999)
+                callsign = f"{airline}{flight_num}"
+                
+                new_aircraft = {
+                    'icao': icao,
+                    'callsign': callsign,
+                    'altitude': random.randint(20000, 42000),
+                    'speed': random.randint(350, 550),
+                    'lat': 40.0 + random.uniform(-2, 2),
+                    'lon': -3.5 + random.uniform(-2, 2),
+                    'last_seen': time.time()
+                }
+                
+                aircraft_list.append(new_aircraft)
+                self.state['aircraft_list'] = aircraft_list
+                
+                # Notificar nuevo avión
+                if self.on_control_change:
+                    self.on_control_change('aircraft_detected', new_aircraft)
+                
+                print(f"✈️ ➕ Nuevo avión detectado: {icao} {callsign} | Total: {len(aircraft_list)}/15")
+            
+            # SIEMPRE actualizar display para reflejar cambios
+            if self.root and self.running:
+                self._update_aircraft_display()
+            
+            # Log periódico del estado
+            if random.random() < 0.1:  # 10% de las veces para no saturar
+                print(f"📊 Aviones activos: {len(aircraft_list)}/15")
+        
+        # Reprogramar actualización cada 3 segundos
+        if self.running and self.root:
+            self._aircraft_update_timer = self.root.after(3000, self._update_aircraft_data)
     
     def _reset_values(self):
         """Resetea todos los valores a defaults"""
@@ -831,19 +1008,11 @@ SIMULACIÓN:
     def _schedule_update(self):
         """Programa actualización periódica de la interfaz"""
         if self.running and self.root:
-            # Actualizar RSSI aleatorio para demo
-            import random
-            rssi = -80 + random.randint(0, 40)
-            self.widgets['rssi_label'].config(text=f"{rssi} dB")
-            
-            # Actualizar autoscan status
-            if self.state['autoscan'] == 1:
-                self.widgets['autoscan_status'].config(text="🔄 ON")
-            else:
-                self.widgets['autoscan_status'].config(text="⚫ OFF")
-            
-            # Actualizar display OLED
+            # Actualizar display OLED principal
             self._update_oled_display()
+            
+            # Actualizar OLED de ADS-B (más lento para ahorrar recursos)
+            self._update_adsb_oled_display()
             
             # Reprogramar
             self.root.after(100, self._schedule_update)  # 10 FPS
@@ -907,6 +1076,106 @@ SIMULACIÓN:
             
         except Exception as e:
             logger.error(f"Error actualizando OLED display: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+    
+    def _update_adsb_oled_display(self):
+        """Actualiza el canvas OLED de ADS-B con lista de aviones"""
+        try:
+            canvas = self.widgets.get('adsb_oled_canvas')
+            if not canvas:
+                return
+            
+            # Dimensiones
+            scale = 3
+            width = 128
+            height = 64
+            scaled_width = width * scale
+            scaled_height = height * scale
+            
+            # Crear imagen RGB (amarillo sobre negro)
+            from PIL import Image, ImageDraw, ImageFont
+            img = Image.new('RGB', (scaled_width, scaled_height), '#000000')
+            draw = ImageDraw.Draw(img)
+            
+            # Color amarillo OLED
+            oled_color = '#FFDC00'
+            
+            # Obtener lista de aviones
+            aircraft_list = self.state.get('aircraft_list', [])
+            
+            if not aircraft_list:
+                # Mostrar mensaje de "Sin aviones"
+                font_size = 12
+                try:
+                    font = ImageFont.truetype("arial.ttf", font_size)
+                except:
+                    font = ImageFont.load_default()
+                
+                text = "ADS-B: Sin aviones"
+                draw.text((10, 25), text, fill=oled_color, font=font)
+            else:
+                # Mostrar lista de aviones (máximo 5 en pantalla)
+                try:
+                    font_header = ImageFont.truetype("arial.ttf", 11)
+                    font_data = ImageFont.truetype("arial.ttf", 9)
+                except:
+                    font_header = ImageFont.load_default()
+                    font_data = ImageFont.load_default()
+                
+                # Header
+                draw.text((2, 2), f"Aviones: {len(aircraft_list)}", fill=oled_color, font=font_header)
+                draw.line((0, 14*scale//3, scaled_width, 14*scale//3), fill=oled_color, width=1)
+                
+                # Índice del avión seleccionado
+                selected_idx = self.state.get('selected_aircraft_index', 0)
+                
+                # Mostrar hasta 4 aviones empezando desde el seleccionado
+                y_pos = 18
+                max_visible = 4
+                
+                for i in range(max_visible):
+                    idx = (selected_idx + i) % len(aircraft_list)
+                    if idx >= len(aircraft_list):
+                        break
+                    
+                    aircraft = aircraft_list[idx]
+                    
+                    # Indicador de selección
+                    prefix = ">" if idx == selected_idx else " "
+                    
+                    # Verificar si está sin señal
+                    signal_lost = aircraft.get('signal_lost', False)
+                    if signal_lost:
+                        prefix = "!" if idx == selected_idx else "!"  # Usar ! para señal perdida
+                    
+                    # ICAO y Callsign
+                    icao = aircraft.get('icao', '------')[:6]
+                    callsign = aircraft.get('callsign', '-')[:8] if aircraft.get('callsign') else '-'
+                    
+                    # Altitud y velocidad
+                    alt = aircraft.get('altitude')
+                    spd = aircraft.get('speed')
+                    
+                    alt_text = f"{int(alt/100):02d}" if alt else "--"  # En centenas de pies
+                    spd_text = f"{int(spd):03d}" if spd else "---"  # En nudos
+                    
+                    # Línea de información compacta
+                    line = f"{prefix}{icao} {callsign:8s} {alt_text} {spd_text}"
+                    
+                    draw.text((2, y_pos), line, fill=oled_color, font=font_data)
+                    y_pos += 11
+            
+            # Convertir a PhotoImage
+            photo = ImageTk.PhotoImage(img)
+            
+            # Actualizar canvas
+            canvas.delete('all')
+            canvas.create_image(0, 0, anchor=tk.NW, image=photo)
+            canvas.image = photo
+            
+        except Exception as e:
+            logger.error(f"Error actualizando OLED de ADS-B: {e}")
             import traceback
             logger.error(traceback.format_exc())
     

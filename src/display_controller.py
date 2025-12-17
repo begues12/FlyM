@@ -168,9 +168,10 @@ class DisplayController:
         """
         with self.lock:
             try:
-                # Obtener menú activo del data
+                # Obtener menú activo y modo del data
                 current_menu = data.get('current_menu', 'frequency')
                 submenu_open = data.get('submenu_open', False)
+                mode = data.get('mode', 'VHF_AM')
         
                 
                 # Mapear menú a vista
@@ -178,21 +179,21 @@ class DisplayController:
                 if submenu_open:
                     self._draw_submenu_view(data)
                 else:
-                    menu_to_view = {
-                        'frequency': 'main',
-                        'autoscan': 'autoscan',
-                        'gain': 'gain',
-                        'volume': 'volume',
-                        'memory': 'memory',
-                        'vox': 'vox'
-                    }
-                    
-                    self.current_view = menu_to_view.get(current_menu, 'main')
-                    
-                    # Si hay datos de ADS-B, priorizar esa vista
-                    if data.get('aircraft_data') and len(data['aircraft_data']) > 0:
-                        if current_menu == 'frequency':  # Solo en vista principal
-                            self.current_view = 'adsb'
+                    # Si estamos en modo ADS-B, mostrar vista de aviones
+                    if mode == 'ADSB':
+                        self.current_view = 'adsb'
+                    else:
+                        menu_to_view = {
+                            'frequency': 'main',
+                            'adsb': 'adsb',
+                            'autoscan': 'autoscan',
+                            'gain': 'gain',
+                            'volume': 'volume',
+                            'memory': 'memory',
+                            'vox': 'vox'
+                        }
+                        
+                        self.current_view = menu_to_view.get(current_menu, 'main')
                     
                     # Mapa de vistas a métodos
                     view_handlers = {
@@ -313,30 +314,36 @@ class DisplayController:
             draw.rectangle((8, 28, 118, 31), outline="white")
     
     def _draw_autoscan_view(self, data):
-        """Vista de auto-scan"""
+        """Vista de auto-scan con frecuencia siendo escaneada"""
         with canvas(self.display) as draw:
             autoscan = data.get('autoscan', 0)
             
             # Indicador + Título
             draw.text((0, 0), ">SCAN", fill="white", font=self.fonts['medium'])
             
-            # Estado ON/OFF grande
-            status = "ON" if autoscan == 1 else "OFF"
-            x_pos = 35 if status == "ON" else 30
-            draw.text((x_pos, 14), status, fill="white", font=self.fonts['large'])
-            
-            # Icono indicador
             if autoscan == 1:
+                # Mostrar frecuencia actual siendo escaneada
+                scan_freq = data.get('scan_frequency')
+                if scan_freq:
+                    freq_mhz = scan_freq / 1e6
+                    draw.text((5, 14), f"{freq_mhz:.3f}", fill="white", font=self.fonts['medium'])
+                    draw.text((70, 16), "MHz", fill="white", font=self.fonts['small'])
+                else:
+                    draw.text((30, 14), "SCAN", fill="white", font=self.fonts['large'])
+                
                 # Dibujar animación de scanning (círculos concéntricos)
                 import time
-                phase = int(time.time() * 2) % 3  # 0, 1, 2
-                center_x, center_y = 100, 20
+                phase = int(time.time() * 3) % 3  # Más rápido: 0, 1, 2
+                center_x, center_y = 110, 20
                 for i in range(3):
                     if i == phase:
                         radius = 3 + i * 2
                         draw.ellipse((center_x - radius, center_y - radius,
                                     center_x + radius, center_y + radius),
                                    outline="white")
+            else:
+                # Estado OFF grande
+                draw.text((30, 14), "OFF", fill="white", font=self.fonts['large'])
     
     def _draw_squelch_view(self, data):
         """DEPRECATED - Vista de squelch ya no se usa"""
@@ -344,26 +351,52 @@ class DisplayController:
         self._draw_main_view(data)
     
     def _draw_adsb_view(self, data):
-        """Vista de datos ADS-B"""
+        """Vista de datos ADS-B - muestra un avión individual con todos sus datos"""
         with canvas(self.display) as draw:
             aircraft_list = data.get('aircraft_data', [])
             
             if not aircraft_list:
-                draw.text((20, 10), "No aircraft", fill="white", font=self.fonts['medium'])
+                # Sin aviones detectados
+                draw.text((5, 0), "ADS-B SCAN", fill="white", font=self.fonts['small'])
+                draw.text((20, 14), "No aircraft", fill="white", font=self.fonts['small'])
                 return
             
-            # Mostrar primer avión
-            ac = aircraft_list[0]
+            # Obtener índice del avión seleccionado
+            selected_idx = data.get('selected_aircraft_index', 0)
             
-            # Línea 1: Callsign
-            callsign = ac.get('callsign', ac.get('icao', 'UNKNOWN'))
-            draw.text((0, 0), callsign[:10], fill="white", font=self.fonts['large'])
+            # Asegurar que el índice sea válido
+            if selected_idx >= len(aircraft_list):
+                selected_idx = 0
             
-            # Línea 2: Altitud y velocidad
-            altitude = ac.get('altitude', 0)
-            speed = ac.get('speed', 0)
-            draw.text((0, 18), f"ALT:{altitude}ft", fill="white", font=self.fonts['small'])
-            draw.text((75, 18), f"{speed}kt", fill="white", font=self.fonts['small'])
+            aircraft = aircraft_list[selected_idx]
+            
+            # Verificar si el avión está sin señal
+            signal_lost = aircraft.get('signal_lost', False)
+            
+            # Línea 1: ICAO y contador (con indicador de señal perdida)
+            icao = aircraft.get('icao', '------')[:6]
+            if signal_lost:
+                draw.text((2, 0), f"!{icao}", fill="white", font=self.fonts['medium'])
+            else:
+                draw.text((2, 0), icao, fill="white", font=self.fonts['medium'])
+            draw.text((95, 1), f"{selected_idx + 1}/{len(aircraft_list)}", fill="white", font=self.fonts['small'])
+            
+            # Línea 2: Callsign
+            callsign = aircraft.get('callsign', '-')
+            if callsign:
+                draw.text((2, 11), callsign[:10], fill="white", font=self.fonts['medium'])
+            else:
+                draw.text((2, 11), "NO CALL", fill="white", font=self.fonts['small'])
+            
+            # Línea 3: Altitud y velocidad
+            altitude = aircraft.get('altitude')
+            speed = aircraft.get('speed')
+            
+            alt_text = f"{int(altitude):05d}ft" if altitude is not None else "-----ft"
+            spd_text = f"{int(speed):03d}kt" if speed is not None else "---kt"
+            
+            draw.text((2, 22), alt_text, fill="white", font=self.fonts['small'])
+            draw.text((80, 22), spd_text, fill="white", font=self.fonts['small'])
     
     def _draw_signal_bars(self, draw, x, y, signal_level):
         """Dibujar barras de señal"""
@@ -443,55 +476,52 @@ class DisplayController:
                 draw.text((0, 16), "OFF", fill="white", font=self.fonts['large'])
     
     def _draw_submenu_view(self, data):
-        """Vista de submenú con opciones: SAVE, MODE, REC, VOX"""
+        """Vista de submenú con 3 opciones: SAVE, REC, EQ
+        
+        Nota: Aviación usa exclusivamente AM (Amplitude Modulation).
+        AM permite que dos transmisiones simultáneas se escuchen mezcladas,
+        mientras que en FM una señal "captura" a la otra perdiendo información.
+        En aviación es crítico oír interferencia antes que perder comunicación.
+        """
         try:
             
             with canvas(self.display) as draw:
                 selected = data.get('submenu_option', 0)
                 
-                # Opciones del submenú
+                # Opciones del submenú (solo 3 ahora)
                 memory_slot = data.get('memory', 1)
                 if memory_slot == 0:
                     save_text = "-"
                 else:
                     save_text = f"M{memory_slot}"
                 
-                # MODE: extraer solo VHF o AM
-                mode = data.get('mode', 'VHF_AM')
-                if mode == 'VHF_AM':
-                    mode_text = "VHF"
-                else:
-                    mode_text = "AM"
-                
                 rec_text = "ON" if data.get('recording', False) else "OFF"
                 eq_text = "ON" if data.get('eq_auto', 0) == 1 else "OFF"
                 
                 # Log solo cuando hay cambio de valor
-                current_values = (save_text, mode_text, rec_text, eq_text)
+                current_values = (save_text, rec_text, eq_text)
                 if not hasattr(self, '_last_submenu_values') or self._last_submenu_values != current_values:
-                    print(f"📺 Submenú actualizado: SAV:{save_text} MOD:{mode_text} REC:{rec_text} EQ:{eq_text}")
+                    print(f"📺 Submenú actualizado: SAV:{save_text} REC:{rec_text} EQ:{eq_text}")
                     self._last_submenu_values = current_values
                 
                 options = [
                     ("SAV", save_text),  # Guardar en memoria (- o M1-M10)
-                    ("MOD", mode_text),  # VHF o AM
                     ("REC", rec_text),   # Grabar
                     ("EQ", eq_text)      # Ecualizador automático
                 ]
                                 
-                # Layout: 2x2 grid más compacto
+                # Layout: 3 opciones horizontales centradas
                 positions = [
-                    (2, 2),    # SAVE top-left
-                    (66, 2),   # MODE top-right
-                    (2, 18),   # REC bottom-left
-                    (66, 18)   # EQ bottom-right
+                    (5, 10),    # SAVE izquierda
+                    (48, 10),   # REC centro
+                    (91, 10)    # EQ derecha
                 ]
                 
                 for i, ((label, value), (x, y)) in enumerate(zip(options, positions)):
                     # Resaltar opción seleccionada
                     if i == selected:
                         # Fondo blanco, texto negro
-                        draw.rectangle((x-1, y-1, x+58, y+11), fill="white")
+                        draw.rectangle((x-2, y-2, x+32, y+12), fill="white")
                         text_color = "black"
                     else:
                         text_color = "white"
